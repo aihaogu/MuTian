@@ -1,0 +1,10 @@
+.build/
+dist/
+.DS_Store
+._*
+*.xcuserdata/
+DerivedData/
+*.log
+DeGuData/
+__pycache__/
+*.pyc

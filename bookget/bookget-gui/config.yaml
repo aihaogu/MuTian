@@ -1,0 +1,34 @@
+# bookget 配置文件config.yaml
+global_settings:
+  download_dir: "downloads"
+  max_downloads: 10000 # 最大下载次数（翻页）
+  sleep_time: 3       # 间隔睡眠几秒（翻页）
+  downloader_mode: 1  # 下载模式 0=从 urls.txt 加载图片URL | 1=自动监听 sites 图片URL | 2 = bookget 共享内存URL
+  ext: ".jpg"         # 保存的文件扩展名
+
+sites:
+  - url: "http://read.nlc.cn/menhu/OutOpenBook/getReaderNew*"
+    ext: ".pdf"                               #保存的文件扩展名（不使用全局设置，单独为这个URL指定）
+    intercept: 0                              #拦截模式 0=发http请求之前，1=发http请求之后
+    description: "中国国家图书馆·中国国家数字图书馆"
+
+  - url: "http://szlib.clcn.net.cn/api/commonApi/jpgViewer*"
+    script: "scripts\\szlib.clcn.net.cn.js"   #页面加载完执行的JS代码
+    intercept: 1
+    description: "首都圖書館古籍數字平台"
+
+  - url: "https://rbook.ncl.edu.tw/NCLSearch/WaterMark/GetVideoImage*"
+    script: "scripts\\rbook.ncl.edu.tw.js"
+    intercept: 1
+    description: "古籍與特藏文獻資源 - （中國台灣省）國家圖書館"
+
+  - url: "https://gzdd.gzlib.org.cn/attach/GZDD/Attach/*.pdf"
+    ext: ".pdf"
+    intercept: 0
+    description: "广州大典"
+
+  - url: "https://dhapi.library.sh.cn/service_pdf/pdf/stream*"
+    ext: ".pdf"
+    script: "scripts\\gj.library.sh.cn.js"
+    intercept: 1
+    description: "上海圖書館古籍"
