@@ -16,7 +16,7 @@ struct DeGuApp: App {
     @StateObject private var downloadStore = DownloadTaskStore()
 
     var body: some Scene {
-        WindowGroup("得古") {
+        WindowGroup("拾古") {
             ContentView()
                 .environmentObject(libraryStore)
                 .environmentObject(settingsStore)
@@ -38,6 +38,13 @@ struct DeGuApp: App {
                 .keyboardShortcut("r", modifiers: [.command])
             }
         }
+
+        WindowGroup("全屏阅读", for: UUID.self) { $bookID in
+            FullScreenReaderWindow(bookID: bookID)
+                .environmentObject(libraryStore)
+                .frame(minWidth: 900, minHeight: 680)
+        }
+        .defaultSize(width: 1280, height: 860)
 
         Settings {
             SettingsView()

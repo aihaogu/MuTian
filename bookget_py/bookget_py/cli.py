@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from . import __version__
 from .config import Config
 from .http import build_headers, read_url_lines
-from .router import route_and_download
+from .router import probe_url, route_and_download
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-T", "--timeout", type=int, default=300, help="网络超时秒数")
     parser.add_argument("--sleep", type=int, default=3, help="间隔睡眠秒数")
     parser.add_argument("-m", "--downloader_mode", type=int, default=0, help="0=默认, 1=通用批量, 2=IIIF manifest")
+    parser.add_argument("--probe", action="store_true", help="只解析 URL 元数据，不下载")
     parser.add_argument("-V", "--version", action="store_true", help="显示版本")
     return parser
 
@@ -78,6 +80,11 @@ def main(argv: list[str] | None = None) -> int:
         if not config.input_url:
             build_parser().print_help()
             return 2
+
+        if args.probe:
+            result = probe_url(config.input_url, config, headers)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
 
         route_and_download(config.input_url, config, headers)
         return 0

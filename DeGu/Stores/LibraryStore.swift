@@ -16,6 +16,7 @@ final class LibraryStore: ObservableObject {
     }
     @Published var classifications: [Classification] = ClassificationSeed.all
     @Published var selectedBookID: UUID?
+    @Published var isBookDetailVisible: Bool = false
     @Published var sidebarSelection: SidebarSelection = .all
     @Published var searchText: String = ""
     @Published var isScanning: Bool = false
@@ -26,8 +27,8 @@ final class LibraryStore: ObservableObject {
     }
 
     var selectedBook: Book? {
-        guard let selectedBookID else { return filteredBooks.first }
-        return books.first { $0.id == selectedBookID }
+        guard let selectedBookID else { return nil }
+        return filteredBooks.first { $0.id == selectedBookID }
     }
 
     var sources: [String] {
@@ -90,7 +91,7 @@ final class LibraryStore: ObservableObject {
     func presentImportPanel() {
         let panel = NSOpenPanel()
         panel.title = "导入古籍文件夹或 PDF"
-        panel.message = "默认只建立索引并记录原始路径，不复制文件。"
+        panel.message = "选择本地文件夹或 PDF 后导入到资料库。"
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
@@ -106,32 +107,52 @@ final class LibraryStore: ObservableObject {
         isScanning = true
         lastImportMessage = "正在扫描 \(urls.count) 个路径..."
 
-        let existingPaths = Set(books.map(\.localPath))
         let results = await Task.detached(priority: .userInitiated) {
-            urls.map { FolderScanner.scan(root: $0, existingPaths: existingPaths) }
+            urls.map { FolderScanner.scan(root: $0) }
         }.value
 
         var imported = 0
+        var refreshed = 0
+        var removed = 0
+        var updatedBooks = books
+        var updatedRoots = roots
+        let requestedPaths = Set(urls.map { $0.standardizedFileURL.path })
+
         for result in results {
-            addRootIfNeeded(result.scannedPath)
-            let newBooks = result.books.filter { candidate in
-                !books.contains(where: { $0.localPath == candidate.localPath })
+            if !updatedRoots.contains(where: { $0.path == result.scannedPath }) {
+                updatedRoots.append(.new(path: result.scannedPath))
             }
-            imported += newBooks.count
-            books.append(contentsOf: newBooks)
+
+            for candidate in result.books {
+                if let index = updatedBooks.firstIndex(where: { $0.localPath == candidate.localPath }) {
+                    if mergeScannedBook(candidate, into: &updatedBooks[index]) {
+                        refreshed += 1
+                    }
+                } else {
+                    updatedBooks.append(candidate)
+                    imported += 1
+                }
+            }
+
+            let scannedPaths = Set(result.books.map(\.localPath))
+            let beforePruneCount = updatedBooks.count
+            updatedBooks.removeAll { book in
+                isPath(book.localPath, insideOrEqualTo: result.scannedPath) && !scannedPaths.contains(book.localPath)
+            }
+            removed += beforePruneCount - updatedBooks.count
         }
 
-        for index in roots.indices {
-            if urls.map({ $0.standardizedFileURL.path }).contains(roots[index].path) {
-                roots[index].lastScannedAt = Date()
+        for index in updatedRoots.indices {
+            if requestedPaths.contains(updatedRoots[index].path) {
+                updatedRoots[index].lastScannedAt = Date()
             }
         }
 
+        roots = updatedRoots
+        books = updatedBooks
         isScanning = false
-        lastImportMessage = "导入完成：新增 \(imported) 部，原文件未复制。"
-        if selectedBookID == nil {
-            selectedBookID = filteredBooks.first?.id
-        }
+        lastImportMessage = "导入完成：新增 \(imported) 部，更新 \(refreshed) 部，移除失效条目 \(removed) 部。"
+        syncSelectionWithFilter()
     }
 
     func rescanKnownRoots() async {
@@ -159,6 +180,16 @@ final class LibraryStore: ObservableObject {
         books[index].updatedAt = Date()
     }
 
+    func selectBook(_ book: Book) {
+        selectedBookID = book.id
+        isBookDetailVisible = true
+    }
+
+    func setBookDetailVisible(_ isVisible: Bool) {
+        guard selectedBookID != nil || !isVisible else { return }
+        isBookDetailVisible = isVisible
+    }
+
     func revealInFinder(_ book: Book) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: book.localPath)])
     }
@@ -171,14 +202,63 @@ final class LibraryStore: ObservableObject {
         } + [("未分类", books.filter { $0.classificationID == Classification.defaultUnclassifiedID }.count)]
     }
 
+    func syncSelectionWithFilter() {
+        let rows = filteredBooks
+        guard let selectedBookID else {
+            return
+        }
+        if !rows.contains(where: { $0.id == selectedBookID }) {
+            self.selectedBookID = nil
+            isBookDetailVisible = false
+        }
+    }
+
     private func classificationDescendants(of id: String) -> [String] {
         let childIDs = classifications.filter { $0.parentID == id }.map(\.id)
         return childIDs + childIDs.flatMap { classificationDescendants(of: $0) }
     }
 
-    private func addRootIfNeeded(_ path: String) {
-        guard !roots.contains(where: { $0.path == path }) else { return }
-        roots.append(.new(path: path))
+    private func mergeScannedBook(_ scanned: Book, into current: inout Book) -> Bool {
+        var changed = false
+
+        func fill(_ keyPath: WritableKeyPath<Book, String>, with value: String) {
+            guard current[keyPath: keyPath].isEmpty, !value.isEmpty else { return }
+            current[keyPath: keyPath] = value
+            changed = true
+        }
+
+        if current.pageCount <= 0, scanned.pageCount > 0 {
+            current.pageCount = scanned.pageCount
+            changed = true
+        }
+        if current.classificationID == Classification.defaultUnclassifiedID,
+           scanned.classificationID != Classification.defaultUnclassifiedID {
+            current.classificationID = scanned.classificationID
+            changed = true
+        }
+        fill(\.author, with: scanned.author)
+        fill(\.dynasty, with: scanned.dynasty)
+        fill(\.edition, with: scanned.edition)
+        fill(\.sourceName, with: scanned.sourceName)
+        fill(\.sourceURL, with: scanned.sourceURL)
+
+        if scanned.fileType == .imageSequence,
+           (current.pageRecords.isEmpty || current.pageRecords.count != scanned.pageRecords.count) {
+            current.pageRecords = scanned.pageRecords
+            current.pageCount = scanned.pageCount
+            changed = true
+        }
+
+        if changed {
+            current.updatedAt = Date()
+        }
+        return changed
+    }
+
+    private func isPath(_ path: String, insideOrEqualTo rootPath: String) -> Bool {
+        if path == rootPath { return true }
+        let normalizedRoot = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        return path.hasPrefix(normalizedRoot)
     }
 
     private func load() {

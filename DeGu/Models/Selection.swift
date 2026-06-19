@@ -9,3 +9,14 @@ enum SidebarSelection: Hashable, Codable {
     case classification(String)
     case source(String)
 }
+
+extension SidebarSelection {
+    var usesBookDetail: Bool {
+        switch self {
+        case .downloads, .statistics:
+            return false
+        case .all, .favorites, .status, .classification, .source:
+            return true
+        }
+    }
+}

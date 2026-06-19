@@ -22,7 +22,7 @@ enum AppPaths {
 
     static var defaultManagedDownloadsDirectory: URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let directory = documents.appendingPathComponent("得古下载", isDirectory: true)
+        let directory = documents.appendingPathComponent("拾古下载", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

@@ -32,6 +32,8 @@ struct DownloadTask: Identifiable, Codable, Hashable {
     var startedAt: Date?
     var finishedAt: Date?
     var importedBookID: UUID?
+    var parsedTitle: String?
+    var parsedVolumeCount: Int?
 
     static func draft(outputDirectory: String) -> DownloadTask {
         DownloadTask(
@@ -54,7 +56,9 @@ struct DownloadTask: Identifiable, Codable, Hashable {
             createdAt: Date(),
             startedAt: nil,
             finishedAt: nil,
-            importedBookID: nil
+            importedBookID: nil,
+            parsedTitle: nil,
+            parsedVolumeCount: nil
         )
     }
 }

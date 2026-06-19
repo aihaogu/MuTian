@@ -23,7 +23,7 @@ struct BookDetailView: View {
             DetailPlaceholder(
                 title: "未选择古籍",
                 systemImage: "books.vertical",
-                message: "导入文件夹后，在中间列表选择一部古籍。得古只记录索引和路径，不复制大体积原文件。"
+                message: "导入文件夹后，在中间浏览页选择一部古籍。"
             )
         }
     }
@@ -35,14 +35,8 @@ struct BookHeaderView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(DeGuTheme.accent.opacity(0.12))
-                    .frame(width: 58, height: 58)
-                Image(systemName: "books.vertical")
-                    .font(.system(size: 25, weight: .regular))
-                    .foregroundStyle(DeGuTheme.accent)
-            }
+            BookCoverThumbnailView(book: book, cornerRadius: 6, showsShadow: false)
+                .frame(width: 44, height: 58)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -73,6 +67,13 @@ struct BookHeaderView: View {
             } label: {
                 Label("Finder", systemImage: "folder")
             }
+            Button {
+                libraryStore.setBookDetailVisible(false)
+            } label: {
+                Label("收起详情", systemImage: "sidebar.right")
+            }
+            .labelStyle(.iconOnly)
+            .help("收起书籍详情")
         }
         .padding(18)
         .background(.bar)
