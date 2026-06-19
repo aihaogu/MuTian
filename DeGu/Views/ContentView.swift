@@ -7,12 +7,16 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView()
-        } content: {
-            contentColumn
         } detail: {
-            detailColumn
+            workspace
         }
         .searchable(text: $libraryStore.searchText, placement: .toolbar, prompt: "搜索书名、作者、来源、标签")
+        .onChange(of: libraryStore.searchText) { _, _ in
+            libraryStore.syncSelectionWithFilter()
+        }
+        .onChange(of: libraryStore.sidebarSelection) { _, _ in
+            libraryStore.syncSelectionWithFilter()
+        }
         .tint(DeGuTheme.accent)
         .toolbar {
             ToolbarItemGroup {
@@ -21,15 +25,33 @@ struct ContentView: View {
                 } label: {
                     Label("导入", systemImage: "square.and.arrow.down")
                 }
-                .help("导入条目并建立索引，不复制原文件")
+                .help("导入本地古籍条目")
 
                 Button {
-                    downloadStore.addDraft(defaultDirectory: AppPaths.defaultManagedDownloadsDirectory.path)
                     libraryStore.sidebarSelection = .downloads
                 } label: {
-                    Label("下载", systemImage: "arrow.down.circle")
+                    if downloadStore.hasRunningTasks {
+                        Label {
+                            Text("下载")
+                        } icon: {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    } else {
+                        Label("下载", systemImage: "arrow.down.circle")
+                    }
                 }
-                .help("创建 bookget 下载任务")
+                .help("打开下载")
+
+                if libraryStore.sidebarSelection.usesBookDetail {
+                    Button {
+                        libraryStore.setBookDetailVisible(!libraryStore.isBookDetailVisible)
+                    } label: {
+                        Label(libraryStore.isBookDetailVisible ? "收起详情" : "展开详情", systemImage: "sidebar.right")
+                    }
+                    .disabled(libraryStore.selectedBookID == nil)
+                    .help(libraryStore.isBookDetailVisible ? "收起书籍详情" : "展开书籍详情")
+                }
 
                 Button {
                     Task { await libraryStore.rescanKnownRoots() }
@@ -42,26 +64,31 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var contentColumn: some View {
+    private var workspace: some View {
         switch libraryStore.sidebarSelection {
         case .downloads:
-            DownloadTaskListView()
+            HSplitView {
+                DownloadTaskListView()
+                    .frame(minWidth: 280, idealWidth: 360)
+                DownloadDetailView()
+                    .frame(minWidth: 360)
+            }
         case .statistics:
-            StatisticsView()
+            HSplitView {
+                StatisticsView()
+                    .frame(minWidth: 280, idealWidth: 360)
+                StatisticsDetailView()
+                    .frame(minWidth: 360)
+            }
         default:
-            LibraryListView()
-        }
-    }
-
-    @ViewBuilder
-    private var detailColumn: some View {
-        switch libraryStore.sidebarSelection {
-        case .downloads:
-            DownloadDetailView()
-        case .statistics:
-            StatisticsDetailView()
-        default:
-            BookDetailView(bookID: libraryStore.selectedBookID)
+            HSplitView {
+                LibraryListView()
+                    .frame(minWidth: 320, idealWidth: 500)
+                if libraryStore.isBookDetailVisible, libraryStore.selectedBookID != nil {
+                    BookDetailView(bookID: libraryStore.selectedBookID)
+                        .frame(minWidth: 420, idealWidth: 620)
+                }
+            }
         }
     }
 }

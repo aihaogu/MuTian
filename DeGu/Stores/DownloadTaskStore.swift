@@ -6,6 +6,7 @@ final class DownloadTaskStore: ObservableObject {
         didSet { save() }
     }
     @Published var selectedTaskID: UUID?
+    @Published private(set) var parsingTaskIDs: Set<UUID> = []
     private var runningProcesses: [UUID: Process] = [:]
 
     init() {
@@ -13,8 +14,12 @@ final class DownloadTaskStore: ObservableObject {
     }
 
     var selectedTask: DownloadTask? {
-        guard let selectedTaskID else { return tasks.first }
+        guard let selectedTaskID else { return nil }
         return tasks.first { $0.id == selectedTaskID }
+    }
+
+    var hasRunningTasks: Bool {
+        tasks.contains { $0.status == .running }
     }
 
     func addDraft(defaultDirectory: String) {
@@ -26,6 +31,43 @@ final class DownloadTaskStore: ObservableObject {
     func update(_ task: DownloadTask) {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         tasks[index] = task
+    }
+
+    func isParsing(taskID: UUID) -> Bool {
+        parsingTaskIDs.contains(taskID)
+    }
+
+    func probe(taskID: UUID, bookgetPath: String) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        guard !parsingTaskIDs.contains(taskID) else { return }
+        guard !bookgetPath.isEmpty else {
+            tasks[index].stderrLog += "\n未设置 bookget 可执行文件路径。"
+            return
+        }
+
+        let executable = URL(fileURLWithPath: bookgetPath)
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            tasks[index].stderrLog += "\nbookget 路径不可执行：\(bookgetPath)"
+            return
+        }
+
+        let url = tasks[index].url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else {
+            tasks[index].stderrLog += "\n解析 URL 不能为空。"
+            return
+        }
+
+        parsingTaskIDs.insert(taskID)
+        tasks[index].stdoutLog += "\n$ \(executable.path) --probe --input \(url)\n"
+
+        let probeTask = Task.detached(priority: .userInitiated) {
+            runProbeProcess(executable: executable, url: url)
+        }
+
+        Task { @MainActor [weak self] in
+            let result = await probeTask.value
+            self?.finishProbe(taskID: taskID, result: result)
+        }
     }
 
     func run(taskID: UUID, bookgetPath: String, libraryStore: LibraryStore) {
@@ -112,6 +154,22 @@ final class DownloadTaskStore: ObservableObject {
         tasks[index].finishedAt = Date()
     }
 
+    func delete(taskID: UUID) {
+        runningProcesses[taskID]?.terminate()
+        runningProcesses[taskID] = nil
+        parsingTaskIDs.remove(taskID)
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        tasks.remove(at: index)
+
+        if selectedTaskID == taskID {
+            if tasks.indices.contains(index) {
+                selectedTaskID = tasks[index].id
+            } else {
+                selectedTaskID = tasks.last?.id
+            }
+        }
+    }
+
     private func buildArguments(for task: DownloadTask) -> [String] {
         var arguments: [String] = [
             "--input", task.url,
@@ -144,6 +202,31 @@ final class DownloadTaskStore: ObservableObject {
         tasks[index].stderrLog += text
     }
 
+    private func finishProbe(taskID: UUID, result: ProbeProcessResult) {
+        parsingTaskIDs.remove(taskID)
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+
+        if !result.stderr.isEmpty {
+            tasks[index].stderrLog += result.stderr
+        }
+
+        guard result.exitCode == 0 else {
+            tasks[index].stderrLog += "\n解析失败，退出码：\(result.exitCode)"
+            return
+        }
+
+        do {
+            let data = Data(result.stdout.utf8)
+            let info = try JSONDecoder().decode(DownloadProbeInfo.self, from: data)
+            tasks[index].parsedTitle = info.title.isEmpty ? nil : info.title
+            tasks[index].parsedVolumeCount = info.volumeCount
+            let title = info.title.isEmpty ? "未识别书名" : info.title
+            tasks[index].stdoutLog += "解析完成：\(title)，\(info.volumeCount) 册\n"
+        } catch {
+            tasks[index].stderrLog += "\n解析结果读取失败：\(error.localizedDescription)\n\(result.stdout)"
+        }
+    }
+
     private func finish(taskID: UUID, exitCode: Int32, libraryStore: LibraryStore?) {
         runningProcesses[taskID] = nil
         guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return }
@@ -174,5 +257,46 @@ final class DownloadTaskStore: ObservableObject {
     private func save() {
         guard let data = try? JSONEncoder.deGu.encode(tasks) else { return }
         try? data.write(to: AppPaths.downloadsFile, options: [.atomic])
+    }
+}
+
+private struct ProbeProcessResult: Sendable {
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+}
+
+private struct DownloadProbeInfo: Decodable {
+    var title: String
+    var volumeCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case volumeCount = "volume_count"
+    }
+}
+
+private func runProbeProcess(executable: URL, url: String) -> ProbeProcessResult {
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["--probe", "--input", url]
+
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        return ProbeProcessResult(
+            exitCode: process.terminationStatus,
+            stdout: String(data: stdoutData, encoding: .utf8) ?? "",
+            stderr: String(data: stderrData, encoding: .utf8) ?? ""
+        )
+    } catch {
+        return ProbeProcessResult(exitCode: -1, stdout: "", stderr: "\n解析启动失败：\(error.localizedDescription)")
     }
 }

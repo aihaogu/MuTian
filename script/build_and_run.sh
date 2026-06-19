@@ -3,7 +3,7 @@ set -euo pipefail
 
 MODE="${1:-run}"
 APP_NAME="DeGu"
-DISPLAY_NAME="得古"
+DISPLAY_NAME="拾古"
 BUNDLE_ID="dev.local.DeGu"
 MIN_SYSTEM_VERSION="14.0"
 

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from .config import Config
 from .downloader import download_urls, expand_template
 from .iiif import download_manifest
+from .nlc import download_nlc, probe_nlc
 
 
 SUPPORTED_DOMAINS = {
@@ -42,6 +43,9 @@ def route_and_download(url: str, config: Config, headers: dict[str, str]) -> int
     if _looks_like_direct_file(lowered):
         return download_urls([url], config, headers)
 
+    if host in {"read.nlc.cn", "mylib.nlc.cn"}:
+        return download_nlc(url, config, headers)
+
     if host in SUPPORTED_DOMAINS:
         raise NotImplementedError(
             f"{SUPPORTED_DOMAINS[host]} 的定制解析尚未迁移到 Python。"
@@ -52,6 +56,24 @@ def route_and_download(url: str, config: Config, headers: dict[str, str]) -> int
         "当前 Python 版支持直接文件 URL、URL 列表、[PAGE] 模板和 IIIF manifest；"
         f"暂不支持自动解析页面：{url}"
     )
+
+
+def probe_url(url: str, config: Config, headers: dict[str, str]) -> dict[str, object]:
+    parsed = urlparse(url)
+    host = parsed.netloc
+
+    if host in {"read.nlc.cn", "mylib.nlc.cn"}:
+        return probe_nlc(url, config, headers)
+
+    if config.downloader_mode == 2 or "manifest.json" in url.lower() or url.lower().endswith(".json"):
+        return {
+            "kind": "IIIF manifest",
+            "title": "",
+            "volume_count": 1,
+            "url": url,
+        }
+
+    raise NotImplementedError(f"暂不支持解析该链接：{url}")
 
 
 def _looks_like_direct_file(url: str) -> bool:

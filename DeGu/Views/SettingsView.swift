@@ -34,7 +34,7 @@ struct SettingsView: View {
             }
 
             Section("导入策略") {
-                Text("已有古籍文件夹导入时只建立索引并记录原路径，不复制、不移动、不重命名原文件。bookget 下载产生的新文件默认保存到得古下载目录。")
+                Text("导入时记录本地路径；bookget 下载产生的新文件默认保存到默认下载目录。")
                     .foregroundStyle(.secondary)
             }
         }

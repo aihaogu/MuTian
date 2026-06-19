@@ -49,6 +49,9 @@ struct StatisticsDetailView: View {
                     MetricCard(title: "收藏", value: "\(libraryStore.books.filter(\.isFavorite).count)", icon: "star")
                     MetricCard(title: "PDF", value: "\(libraryStore.books.filter { $0.fileType == .pdf }.count)", icon: "doc.richtext")
                     MetricCard(title: "图片序列", value: "\(libraryStore.books.filter { $0.fileType == .imageSequence }.count)", icon: "photo.on.rectangle")
+                    MetricCard(title: "电子书", value: "\(libraryStore.books.filter { $0.fileType == .ebook }.count)", icon: "book")
+                    MetricCard(title: "文档", value: "\(libraryStore.books.filter { $0.fileType == .document }.count)", icon: "doc")
+                    MetricCard(title: "文本", value: "\(libraryStore.books.filter { $0.fileType == .text }.count)", icon: "text.page")
                     MetricCard(title: "待整理", value: "\(libraryStore.books.filter { $0.status == .pending }.count)", icon: "tray")
                     MetricCard(title: "需校对", value: "\(libraryStore.books.filter { $0.status == .needsProofreading }.count)", icon: "pencil.and.outline")
                 }

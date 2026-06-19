@@ -1,15 +1,18 @@
 import Foundation
 
-enum BookFileType: String, Codable, CaseIterable, Identifiable {
+enum BookFileType: String, Codable, CaseIterable, Identifiable, Sendable {
     case pdf = "PDF"
     case imageSequence = "图片序列"
     case text = "文本"
+    case ebook = "电子书"
+    case document = "文档"
+    case archive = "压缩包"
     case mixedFolder = "混合目录"
 
     var id: String { rawValue }
 }
 
-enum BookStatus: String, Codable, CaseIterable, Identifiable {
+enum BookStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case pending = "待整理"
     case organized = "已整理"
     case needsProofreading = "需校对"
@@ -19,7 +22,7 @@ enum BookStatus: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct Book: Identifiable, Codable, Hashable {
+struct Book: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var title: String
     var author: String
@@ -73,7 +76,7 @@ struct Book: Identifiable, Codable, Hashable {
     }
 }
 
-struct PageRecord: Identifiable, Codable, Hashable {
+struct PageRecord: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var bookID: UUID
     var pageIndex: Int
