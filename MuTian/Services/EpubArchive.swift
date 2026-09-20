@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct EpubDocument {
     let title: String
@@ -13,8 +14,11 @@ struct EpubChapter: Identifiable, Hashable {
 }
 
 enum EpubArchive {
-    static func load(from epubURL: URL) throws -> EpubDocument {
-        let extractedRoot = try extractedRoot(for: epubURL)
+    static func load(from epubURL: URL, cacheDirectory: URL? = nil) throws -> EpubDocument {
+        guard FileManager.default.isReadableFile(atPath: epubURL.path) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let extractedRoot = try extractedRoot(for: epubURL, cacheDirectory: cacheDirectory)
         let containerURL = extractedRoot.appendingPathComponent("META-INF/container.xml")
         let opfRelativePath = try parseContainer(at: containerURL)
         let opfURL = resolve(opfRelativePath, relativeTo: extractedRoot)
@@ -33,6 +37,9 @@ enum EpubArchive {
         guard !chapters.isEmpty else {
             throw EpubError.emptySpine
         }
+        guard chapters.allSatisfy({ FileManager.default.isReadableFile(atPath: $0.url.path) }) else {
+            throw EpubError.missingChapter
+        }
 
         return EpubDocument(
             title: package.title.isEmpty ? epubURL.deletingPathExtension().lastPathComponent : package.title,
@@ -41,37 +48,46 @@ enum EpubArchive {
         )
     }
 
-    private static func extractedRoot(for epubURL: URL) throws -> URL {
+    private static func extractedRoot(for epubURL: URL, cacheDirectory: URL?) throws -> URL {
         let fm = FileManager.default
-        let cacheRoot = AppPaths.supportDirectory.appendingPathComponent("epub-cache", isDirectory: true)
+        let cacheRoot = cacheDirectory ?? AppPaths.supportDirectory.appendingPathComponent("epub-cache", isDirectory: true)
         try fm.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
 
         let directory = cacheRoot.appendingPathComponent(cacheKey(for: epubURL), isDirectory: true)
-        let marker = directory.appendingPathComponent("META-INF/container.xml")
+        let marker = directory.appendingPathComponent(".extraction-complete")
         if fm.fileExists(atPath: marker.path) {
             return directory
         }
 
         try? fm.removeItem(at: directory)
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let staging = cacheRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-oq", epubURL.path, "-d", directory.path]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", epubURL.path, staging.path]
 
         let errorPipe = Pipe()
         process.standardError = errorPipe
         try process.run()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
-            let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw EpubError.unzipFailed(message ?? "unzip 退出码 \(process.terminationStatus)")
+            let message = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw EpubError.extractionFailed(message ?? "解包退出码 \(process.terminationStatus)")
         }
 
-        guard fm.fileExists(atPath: marker.path) else {
+        guard fm.fileExists(atPath: staging.appendingPathComponent("META-INF/container.xml").path) else {
             throw EpubError.missingContainer
+        }
+        try Data().write(to: staging.appendingPathComponent(".extraction-complete"))
+        do {
+            try fm.moveItem(at: staging, to: directory)
+        } catch {
+            // Another reading window may have completed the same extraction first.
+            guard fm.fileExists(atPath: marker.path) else { throw error }
         }
         return directory
     }
@@ -89,20 +105,27 @@ enum EpubArchive {
     }
 
     private static func parsePackage(at url: URL) throws -> EpubPackage {
-        guard let parser = XMLParser(contentsOf: url) else {
-            throw EpubError.missingPackage
+        guard let data = try? Data(contentsOf: url) else { throw EpubError.missingPackage }
+        func parse(_ content: Data) -> EpubPackage? {
+            let parser = XMLParser(data: content)
+            let delegate = EpubPackageParser()
+            parser.delegate = delegate
+            guard parser.parse() else { return nil }
+            return EpubPackage(
+                title: delegate.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                manifest: delegate.manifest,
+                spineIDs: delegate.spineIDs,
+                tocID: delegate.tocID
+            )
         }
-        let delegate = EpubPackageParser()
-        parser.delegate = delegate
-        guard parser.parse() else {
-            throw EpubError.invalidPackage
+        if let package = parse(data) { return package }
+        // Some exported books contain illegal double hyphens in informational XML
+        // comments. Retry without comments; keep the original archive untouched.
+        if let xml = String(data: data, encoding: .utf8) {
+            let withoutComments = xml.replacingOccurrences(of: "(?s)<!--.*?-->", with: "", options: .regularExpression)
+            if withoutComments != xml, let package = parse(Data(withoutComments.utf8)) { return package }
         }
-        return EpubPackage(
-            title: delegate.title.trimmingCharacters(in: .whitespacesAndNewlines),
-            manifest: delegate.manifest,
-            spineIDs: delegate.spineIDs,
-            tocID: delegate.tocID
-        )
+        throw EpubError.invalidPackage
     }
 
     private static func parseChapterLabels(package: EpubPackage, opfDirectory: URL) -> [String: String] {
@@ -152,9 +175,11 @@ enum EpubArchive {
     private static func cacheKey(for url: URL) -> String {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         let size = values?.fileSize ?? 0
-        let modified = Int(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)
+        let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
         let name = sanitized(url.deletingPathExtension().lastPathComponent)
-        return "\(name)-\(size)-\(modified)"
+        let identity = "\(url.standardizedFileURL.path)|\(size)|\(modified)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "\(name.prefix(40))-\(digest)"
     }
 
     private static func sanitized(_ value: String) -> String {
@@ -173,7 +198,8 @@ private enum EpubError: LocalizedError {
     case missingPackage
     case invalidPackage
     case emptySpine
-    case unzipFailed(String)
+    case missingChapter
+    case extractionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -187,7 +213,9 @@ private enum EpubError: LocalizedError {
             return "无法解析 EPUB 的 OPF 包文件。"
         case .emptySpine:
             return "EPUB 中没有可阅读的 HTML/XHTML 章节。"
-        case .unzipFailed(let message):
+        case .missingChapter:
+            return "EPUB 的目录引用了缺失的章节文件，请检查文件是否完整。"
+        case .extractionFailed(let message):
             return "EPUB 解包失败：\(message)"
         }
     }

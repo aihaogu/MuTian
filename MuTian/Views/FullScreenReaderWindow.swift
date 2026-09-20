@@ -9,6 +9,7 @@ struct FullScreenReaderWindow: View {
         Group {
             if let bookID, let book = libraryStore.books.first(where: { $0.id == bookID }) {
                 ReaderView(book: book, presentation: .fullScreenWindow)
+                    .id("\(book.id)|\(book.localPath)")
                     .background {
                         FullScreenWindowConfigurator(title: "阅读 - \(book.title)")
                     }

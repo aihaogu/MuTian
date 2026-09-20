@@ -1,13 +1,9 @@
 import AppKit
 import Foundation
 
-struct LibrarySnapshot: Codable {
-    var books: [Book]
-    var roots: [LibraryRoot]
-}
-
 @MainActor
 final class LibraryStore: ObservableObject {
+    private var isLoading = false
     @Published var books: [Book] = [] {
         didSet { save() }
     }
@@ -103,12 +99,18 @@ final class LibraryStore: ObservableObject {
     }
 
     func importURLs(_ urls: [URL]) async {
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty, !isScanning else { return }
+        let accessibleURLs = urls.filter { FileManager.default.isReadableFile(atPath: $0.path) }
+        let unavailableCount = urls.count - accessibleURLs.count
+        guard !accessibleURLs.isEmpty else {
+            lastImportMessage = "文件或目录不可用，请重新定位；已有书目已保留。"
+            return
+        }
         isScanning = true
         lastImportMessage = "正在扫描 \(urls.count) 个路径..."
 
         let results = await Task.detached(priority: .userInitiated) {
-            urls.map { FolderScanner.scan(root: $0) }
+            accessibleURLs.map { FolderScanner.scan(root: $0) }
         }.value
 
         var imported = 0
@@ -116,7 +118,7 @@ final class LibraryStore: ObservableObject {
         var removed = 0
         var updatedBooks = books
         var updatedRoots = roots
-        let requestedPaths = Set(urls.map { $0.standardizedFileURL.path })
+        let requestedPaths = Set(results.filter(\.isComplete).map(\.scannedPath))
 
         for result in results {
             if !updatedRoots.contains(where: { $0.path == result.scannedPath }) {
@@ -136,8 +138,10 @@ final class LibraryStore: ObservableObject {
 
             let scannedPaths = Set(result.books.map(\.localPath))
             let beforePruneCount = updatedBooks.count
-            updatedBooks.removeAll { book in
-                isPath(book.localPath, insideOrEqualTo: result.scannedPath) && !scannedPaths.contains(book.localPath)
+            if result.isComplete {
+                updatedBooks.removeAll { book in
+                    isPath(book.localPath, insideOrEqualTo: result.scannedPath) && !scannedPaths.contains(book.localPath)
+                }
             }
             removed += beforePruneCount - updatedBooks.count
         }
@@ -152,6 +156,9 @@ final class LibraryStore: ObservableObject {
         books = updatedBooks
         isScanning = false
         lastImportMessage = "导入完成：新增 \(imported) 部，更新 \(refreshed) 部，移除失效条目 \(removed) 部。"
+        if unavailableCount > 0 || results.contains(where: { !$0.isComplete }) {
+            lastImportMessage += " 部分路径不可用，相关旧书目已保留。"
+        }
         syncSelectionWithFilter()
     }
 
@@ -175,6 +182,7 @@ final class LibraryStore: ObservableObject {
 
     func updateReadProgress(bookID: UUID, page: Int) {
         guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
+        guard books[index].lastReadPage != max(0, page) else { return }
         books[index].lastReadPage = max(0, page)
         books[index].lastReadAt = Date()
         books[index].updatedAt = Date()
@@ -192,6 +200,29 @@ final class LibraryStore: ObservableObject {
 
     func revealInFinder(_ book: Book) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: book.localPath)])
+    }
+
+    func relocateFile(for book: Book) {
+        let panel = NSOpenPanel()
+        panel.title = book.fileType == .imageSequence ? "定位图片所在文件夹" : "定位原文件"
+        panel.canChooseDirectories = book.fileType == .imageSequence
+        panel.canChooseFiles = book.fileType != .imageSequence
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var snapshot = LibrarySnapshot(books: books, roots: roots)
+        guard LibraryPathRepair.repair(&snapshot, from: URL(fileURLWithPath: book.localPath), to: url) > 0 else { return }
+        do {
+            let backup = AppPaths.supportDirectory.appendingPathComponent("library-before-relocation-\(UUID().uuidString).json")
+            try FileManager.default.copyItem(at: AppPaths.libraryFile, to: backup)
+        } catch {
+            lastImportMessage = "无法备份资料库，未修改文件位置：\(error.localizedDescription)"
+            return
+        }
+        isLoading = true
+        books = snapshot.books
+        roots = snapshot.roots
+        isLoading = false
+        save()
     }
 
     func countsByTopClassification() -> [(String, Int)] {
@@ -263,14 +294,31 @@ final class LibraryStore: ObservableObject {
 
     private func load() {
         guard let data = try? Data(contentsOf: AppPaths.libraryFile),
-              let snapshot = try? JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data) else {
+              var snapshot = try? JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data) else {
             return
         }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let changes = LibraryPathRepair.repair(&snapshot,
+            from: home.appendingPathComponent("得古测试"),
+            to: home.appendingPathComponent("木天测试"))
+        if changes > 0 {
+            let backup = AppPaths.supportDirectory.appendingPathComponent("library-before-path-repair-\(UUID().uuidString).json")
+            do {
+                try data.write(to: backup, options: [.atomic])
+            } catch {
+                snapshot = (try? JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data)) ?? snapshot
+                lastImportMessage = "路径修复前无法备份资料库：\(error.localizedDescription)"
+            }
+        }
+        isLoading = true
         books = snapshot.books
         roots = snapshot.roots
+        isLoading = false
+        if changes > 0 { save() }
     }
 
     private func save() {
+        guard !isLoading else { return }
         let snapshot = LibrarySnapshot(books: books, roots: roots)
         guard let data = try? JSONEncoder.muTian.encode(snapshot) else { return }
         try? data.write(to: AppPaths.libraryFile, options: [.atomic])

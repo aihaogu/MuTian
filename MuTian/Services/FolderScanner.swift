@@ -4,6 +4,7 @@ import PDFKit
 struct ScanResult {
     var books: [Book]
     var scannedPath: String
+    var isComplete = true
 }
 
 enum FolderScanner {
@@ -13,6 +14,10 @@ enum FolderScanner {
         var books: [Book] = []
         var seenImageDirectories = Set<String>()
         let fm = FileManager.default
+        guard fm.isReadableFile(atPath: root.path) else {
+            return ScanResult(books: [], scannedPath: root.standardizedFileURL.path, isComplete: false)
+        }
+        var isComplete = true
 
         func appendBookFile(_ url: URL) {
             guard let fileType = FileTypeDetector.bookFileType(for: url) else { return }
@@ -36,7 +41,7 @@ enum FolderScanner {
                 at: url,
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles]
-            ) else { return }
+            ) else { isComplete = false; return }
 
             let images = children.filter { FileTypeDetector.isImage($0) && !FileTypeDetector.isLikelySidecarResource($0) }
             guard images.count >= minimumImageSequencePageCount else { return }
@@ -75,9 +80,10 @@ enum FolderScanner {
         guard let enumerator = fm.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
-            options: [.skipsHiddenFiles]
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in isComplete = false; return true }
         ) else {
-            return ScanResult(books: books, scannedPath: root.standardizedFileURL.path)
+            return ScanResult(books: books, scannedPath: root.standardizedFileURL.path, isComplete: false)
         }
 
         for case let url as URL in enumerator {
@@ -87,6 +93,7 @@ enum FolderScanner {
             }
 
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+            if values == nil { isComplete = false }
             if values?.isDirectory == true {
                 appendImageDirectory(url)
             } else if values?.isRegularFile == true {
@@ -94,7 +101,7 @@ enum FolderScanner {
             }
         }
 
-        return ScanResult(books: books, scannedPath: root.standardizedFileURL.path)
+        return ScanResult(books: books, scannedPath: root.standardizedFileURL.path, isComplete: isComplete)
     }
 
     private static func apply(_ metadata: MetadataCandidate, to book: inout Book) {

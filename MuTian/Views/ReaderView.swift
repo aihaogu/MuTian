@@ -2,6 +2,7 @@ import AppKit
 import PDFKit
 import SwiftUI
 import WebKit
+import Quartz
 
 enum ReaderPresentation {
     case embedded
@@ -26,52 +27,79 @@ struct ReaderView: View {
         VStack(spacing: 0) {
             readerToolbar
             Divider()
-            switch book.fileType {
-            case .pdf:
-                PDFReaderView(url: URL(fileURLWithPath: book.localPath), pageIndex: $currentPage)
-            case .imageSequence:
-                ImageSequenceReader(book: book, currentPage: $currentPage)
-            case .text:
-                TextFileReader(url: URL(fileURLWithPath: book.localPath))
-            case .ebook:
-                if isEpubBook {
-                    EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount)
-                } else {
-                    DetailPlaceholder(title: "暂不支持直接阅读", systemImage: "doc.text", message: "当前电子书阅读器支持 EPUB。")
+            if !FileManager.default.fileExists(atPath: book.localPath) {
+                VStack(spacing: 16) {
+                    DetailPlaceholder(title: "找不到原文件", systemImage: "folder.badge.questionmark", message: "文件或所在文件夹已移动，请重新定位。书目和阅读进度仍然保留。")
+                    Button("重新定位文件") { libraryStore.relocateFile(for: book) }
                 }
-            case .document, .archive, .mixedFolder:
-                DetailPlaceholder(title: "暂不支持直接阅读", systemImage: "doc.text", message: "当前阅读器支持 PDF、图片序列、纯文本和 EPUB。")
+            } else {
+                switch book.fileType {
+                case .pdf:
+                    PDFReaderView(url: URL(fileURLWithPath: book.localPath), pageIndex: $currentPage, pageCount: $effectivePageCount)
+                case .imageSequence:
+                    ImageSequenceReader(book: book, currentPage: $currentPage)
+                case .text:
+                    TextFileReader(url: URL(fileURLWithPath: book.localPath))
+                case .ebook:
+                    if isEpubBook {
+                        EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount)
+                    } else {
+                        unsupportedReader
+                    }
+                case .document:
+                    if ["doc", "docx", "ppt", "pptx", "rtf"].contains(URL(fileURLWithPath: book.localPath).pathExtension.lowercased()) {
+                        SystemDocumentReader(url: URL(fileURLWithPath: book.localPath))
+                    } else {
+                        unsupportedReader
+                    }
+                case .archive, .mixedFolder:
+                    unsupportedReader
+                }
             }
         }
         .background(MuTianTheme.paper)
         .onChange(of: currentPage) { _, newValue in
             libraryStore.updateReadProgress(bookID: book.id, page: newValue)
         }
+        .onChange(of: book.lastReadPage) { _, newValue in
+            if currentPage != newValue { currentPage = max(0, newValue) }
+        }
+    }
+
+    private var unsupportedReader: some View {
+        VStack(spacing: 16) {
+            DetailPlaceholder(title: "此格式需要外部阅读器", systemImage: "doc.text", message: "当前内置阅读器支持 PDF、图片、文本和 EPUB，Office 文档使用系统预览。此文件可用已安装的兼容应用打开。")
+            Button("用默认应用打开") { NSWorkspace.shared.open(URL(fileURLWithPath: book.localPath)) }
+        }
     }
 
     private var readerToolbar: some View {
         HStack {
-            Button {
-                currentPage = max(0, min(currentPage, maxPageIndex) - 1)
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .help("上一页")
-            .disabled(displayedPageCount <= 1)
+            if supportsPaging {
+                Button {
+                    currentPage = max(0, min(currentPage, maxPageIndex) - 1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .help("上一页")
+                .disabled(currentPage <= 0)
 
-            Stepper(value: clampedCurrentPage, in: 0...maxPageIndex) {
-                Text("第 \(min(currentPage + 1, displayedPageCount)) / \(displayedPageCount) \(readerUnitName)")
-                    .frame(minWidth: 120, alignment: .leading)
-            }
-            .disabled(displayedPageCount <= 1)
+                Stepper(value: clampedCurrentPage, in: 0...maxPageIndex) {
+                    Text("第 \(min(currentPage + 1, displayedPageCount)) / \(displayedPageCount) \(readerUnitName)")
+                        .frame(minWidth: 120, alignment: .leading)
+                }
+                .disabled(displayedPageCount <= 1)
 
-            Button {
-                currentPage = min(maxPageIndex, currentPage + 1)
-            } label: {
-                Image(systemName: "chevron.right")
+                Button {
+                    currentPage = min(maxPageIndex, currentPage + 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .help("下一页")
+                .disabled(currentPage >= maxPageIndex)
+            } else if book.fileType == .text || book.fileType == .document {
+                Text("连续阅读").foregroundStyle(.secondary)
             }
-            .help("下一页")
-            .disabled(displayedPageCount <= 1)
 
             Spacer()
 
@@ -86,6 +114,10 @@ struct ReaderView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    private var supportsPaging: Bool {
+        book.fileType == .pdf || book.fileType == .imageSequence || isEpubBook
     }
 
     private var displayedPageCount: Int {
@@ -135,55 +167,88 @@ struct ReaderView: View {
     }
 }
 
+private struct LoadedPDF: @unchecked Sendable {
+    // Transfer ownership to the main actor after background loading completes.
+    let document: PDFDocument?
+}
+
 struct PDFReaderView: View {
     let url: URL
     @Binding var pageIndex: Int
-    private let document: PDFDocument?
-
-    init(url: URL, pageIndex: Binding<Int>) {
-        self.url = url
-        _pageIndex = pageIndex
-        document = PDFDocument(url: url)
-    }
+    @Binding var pageCount: Int?
+    @State private var document: PDFDocument?
+    @State private var errorMessage: String?
 
     var body: some View {
-        if let document, document.pageCount > 0 {
-            PDFReaderRepresentable(document: document, pageIndex: $pageIndex)
-                .background(MuTianTheme.paper)
-        } else {
-            DetailPlaceholder(
-                title: "无法直接预览 PDF",
-                systemImage: "doc.richtext",
-                message: "该文件页数已记录，但 macOS PDFKit 无法渲染它。可先在 Finder 中打开原文件。"
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MuTianTheme.paper)
+        Group {
+            if let document {
+                PDFReaderRepresentable(document: document, pageIndex: $pageIndex)
+            } else if let errorMessage {
+                DetailPlaceholder(title: "无法打开 PDF", systemImage: "doc.richtext", message: errorMessage)
+            } else {
+                ProgressView("正在打开 PDF…")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MuTianTheme.paper)
+        .task(id: url) {
+            document = nil
+            errorMessage = nil
+            let source = url
+            let result = await Task.detached(priority: .userInitiated) {
+                LoadedPDF(document: PDFDocument(url: source))
+            }.value
+            guard !Task.isCancelled else { return }
+            if let loaded = result.document, !loaded.isLocked, loaded.pageCount > 0 {
+                pageCount = loaded.pageCount
+                pageIndex = min(max(pageIndex, 0), loaded.pageCount - 1)
+                document = loaded
+            } else {
+                errorMessage = result.document?.isLocked == true
+                    ? "此 PDF 已加密，请先用“预览”解锁后再导入。"
+                    : "无法解析这个 PDF。请检查文件是否完整、是否具有读取权限，或用“预览”检查原文件。"
+            }
         }
     }
 }
 
 struct TextFileReader: View {
     let url: URL
+    @State private var text: String?
+    @State private var errorMessage: String?
 
     var body: some View {
-        ScrollView {
-            Text(fileText)
-                .font(.system(.body, design: .serif))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+        Group {
+            if let text {
+                ScrollView {
+                    Text(text)
+                        .font(.system(.body, design: .serif))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(24)
+                }
+            } else if let errorMessage {
+                DetailPlaceholder(title: "无法读取文本", systemImage: "doc.text", message: errorMessage)
+            } else {
+                ProgressView("正在读取文本…")
+            }
         }
         .background(MuTianTheme.paper)
-    }
-
-    private var fileText: String {
-        if let text = try? String(contentsOf: url, encoding: .utf8) {
-            return text
+        .task(id: url) {
+            text = nil
+            errorMessage = nil
+            let source = url
+            do {
+                let loaded = try await Task.detached(priority: .userInitiated) {
+                    try TextFileLoader.load(from: source)
+                }.value
+                guard !Task.isCancelled else { return }
+                text = loaded
+            } catch {
+                guard !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+            }
         }
-        if let text = try? String(contentsOf: url, encoding: .unicode) {
-            return text
-        }
-        return "无法读取文本内容。"
     }
 }
 
@@ -191,22 +256,69 @@ struct PDFReaderRepresentable: NSViewRepresentable {
     let document: PDFDocument
     @Binding var pageIndex: Int
 
+    func makeCoordinator() -> Coordinator { Coordinator(pageIndex: $pageIndex) }
+
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
-        view.document = document
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.pageChanged(_:)), name: .PDFViewPageChanged, object: view)
         return view
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
-        if view.document !== document {
-            view.document = document
-        }
-        guard let page = view.document?.page(at: pageIndex) else { return }
-        if view.currentPage != page {
+        let coordinator = context.coordinator
+        coordinator.pageIndex = $pageIndex
+        coordinator.isUpdating = true
+        defer { coordinator.isUpdating = false }
+        let changedDocument = view.document !== document
+        if changedDocument { view.document = document }
+        let requested = min(max(0, pageIndex), max(0, document.pageCount - 1))
+        guard changedDocument || coordinator.requestedPage != requested else { return }
+        coordinator.requestedPage = requested
+        if let page = document.page(at: requested), view.currentPage !== page {
             view.go(to: page)
+        }
+    }
+
+    static func dismantleNSView(_ view: PDFView, coordinator: Coordinator) {
+        NotificationCenter.default.removeObserver(coordinator)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var pageIndex: Binding<Int>
+        var requestedPage: Int?
+        var isUpdating = false
+
+        init(pageIndex: Binding<Int>) { self.pageIndex = pageIndex }
+
+        @objc func pageChanged(_ notification: Notification) {
+            guard !isUpdating, let view = notification.object as? PDFView else { return }
+            Task { @MainActor [weak self, weak view] in
+                guard let self, let view, let page = view.currentPage, let document = view.document else { return }
+                let index = document.index(for: page)
+                guard index != NSNotFound else { return }
+                self.requestedPage = index
+                if self.pageIndex.wrappedValue != index { self.pageIndex.wrappedValue = index }
+            }
+        }
+    }
+}
+
+struct SystemDocumentReader: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> QLPreviewView {
+        let view = QLPreviewView(frame: .zero, style: .normal)!
+        view.autostarts = true
+        return view
+    }
+
+    func updateNSView(_ view: QLPreviewView, context: Context) {
+        if (view.previewItem as? NSURL) != url as NSURL {
+            view.previewItem = url as NSURL
         }
     }
 }
@@ -248,8 +360,8 @@ struct ImageSequenceReader: View {
     }
 
     private var currentImage: NSImage? {
-        guard book.pageRecords.indices.contains(currentPage) else { return nil }
-        return NSImage(contentsOfFile: book.pageRecords[currentPage].imagePath)
+        guard let page = book.pageRecords.first(where: { $0.pageIndex == currentPage }) else { return nil }
+        return NSImage(contentsOfFile: page.imagePath)
     }
 }
 
@@ -283,7 +395,7 @@ struct EpubReaderView: View {
                 .background(MuTianTheme.paper)
             }
         }
-        .task(id: book.id) {
+        .task(id: book.localPath) {
             await loadDocument()
         }
     }
@@ -322,10 +434,12 @@ struct EpubReaderView: View {
             let loaded = try await Task.detached(priority: .userInitiated) {
                 try EpubArchive.load(from: url)
             }.value
+            guard !Task.isCancelled else { return }
             document = loaded
             chapterCount = loaded.chapters.count
             currentPage = min(max(currentPage, 0), max(0, loaded.chapters.count - 1))
         } catch {
+            guard !Task.isCancelled else { return }
             chapterCount = nil
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

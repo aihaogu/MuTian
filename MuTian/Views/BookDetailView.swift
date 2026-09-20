@@ -11,6 +11,7 @@ struct BookDetailView: View {
                 Divider()
                 TabView {
                     ReaderView(book: book)
+                        .id("\(book.id)|\(book.localPath)")
                         .tabItem { Label("阅读", systemImage: "book") }
                     BookMetadataEditor(book: book)
                         .tabItem { Label("书目", systemImage: "info.circle") }
@@ -50,7 +51,9 @@ struct BookHeaderView: View {
                 HStack(spacing: 6) {
                     MetaPill(text: libraryStore.classificationName(for: book.classificationID), systemImage: "square.grid.2x2", color: MuTianTheme.accent)
                     MetaPill(text: book.fileType.rawValue, systemImage: "doc.richtext", color: MuTianTheme.indigo)
-                    MetaPill(text: "\(book.pageCount) 页", systemImage: "number", color: .secondary)
+                    if book.pageCount > 0 {
+                        MetaPill(text: "\(book.pageCount) 页", systemImage: "number", color: .secondary)
+                    }
                     if !book.sourceName.isEmpty {
                         MetaPill(text: book.sourceName, systemImage: "building.columns", color: MuTianTheme.jade)
                     }
