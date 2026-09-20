@@ -5,6 +5,6 @@ dist/
 *.xcuserdata/
 DerivedData/
 *.log
-DeGuData/
+MuTianData/
 __pycache__/
 *.pyc

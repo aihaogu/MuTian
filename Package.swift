@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "DeGu",
+    name: "MuTian",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "DeGu", targets: ["DeGu"])
+        .executable(name: "MuTian", targets: ["MuTian"])
     ],
     targets: [
         .executableTarget(
-            name: "DeGu",
-            path: "DeGu",
+            name: "MuTian",
+            path: "MuTian",
             exclude: ["Resources"]
         )
     ]

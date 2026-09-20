@@ -1,6 +1,6 @@
 # bookget Python 版
 
-这是 `bookget` 的 Python 迁移入口，目标是让“得古”App 不再依赖 Go 编译产物。
+这是 `bookget` 的 Python 迁移入口，目标是让“木天”App 不再依赖 Go 编译产物。
 
 当前已完成：
 

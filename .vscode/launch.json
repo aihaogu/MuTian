@@ -4,21 +4,21 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:得古}",
-            "name": "Debug DeGu",
-            "target": "DeGu",
+            "cwd": "${workspaceFolder}",
+            "name": "Debug MuTian",
+            "target": "MuTian",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug DeGu"
+            "preLaunchTask": "swift: Build Debug MuTian"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:得古}",
-            "name": "Release DeGu",
-            "target": "DeGu",
+            "cwd": "${workspaceFolder}",
+            "name": "Release MuTian",
+            "target": "MuTian",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release DeGu"
+            "preLaunchTask": "swift: Build Release MuTian"
         }
     ]
 }

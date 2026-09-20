@@ -1,6 +1,8 @@
-# 拾古
+# 木天
 
-拾古是一个本地优先的 macOS 古籍资料库应用，用于整理、收藏、检索、下载、统计和阅读本地古籍资料。项目包名仍沿用 `DeGu`。
+木天是一个本地优先的 macOS 古籍资料库应用，用于整理、收藏、检索、下载、统计和阅读本地古籍资料。项目包名与 GitHub 仓库名为 `MuTian`。
+
+项目地址：https://github.com/aihaogu/MuTian
 
 ## 当前功能
 
@@ -30,7 +32,7 @@
 
 https://github.com/deweizhu/bookget
 
-`bookget` 是一个数字古籍图书下载工具，支持多个数字图书馆、古籍平台和 IIIF 资源站点。拾古在 macOS App 中负责下载任务配置、链接解析、进度展示、日志查看、结果导入和本地资料库管理。
+`bookget` 是一个数字古籍图书下载工具，支持多个数字图书馆、古籍平台和 IIIF 资源站点。木天在 macOS App 中负责下载任务配置、链接解析、进度展示、日志查看、结果导入和本地资料库管理。
 
 ## 开发
 
@@ -40,9 +42,15 @@ https://github.com/deweizhu/bookget
 ./script/build_and_run.sh
 ```
 
+只构建应用可运行 `./script/build_and_run.sh --build`；资料库迁移专项检查运行 `./scripts/test_app_paths.sh`（支持仅安装 Command Line Tools 的环境）。
+
 项目结构：
 
-- `DeGu/`：macOS SwiftUI App 源码。
+- `MuTian/`：macOS SwiftUI App 源码。
 - `bookget/`：数字古籍下载引擎源码，来源于 `deweizhu/bookget`。
 - `bookget_py/`：Python 版本下载能力实现，包含站点路由和国家图书馆下载支持。
 - `scripts/`、`script/`：构建和运行脚本。
+
+## 本地数据
+
+应用数据存放在 `~/Library/Application Support/木天/`。首次运行会复制旧版“得古”的资料库、设置和下载记录，保留旧目录作为备份；已有“木天”目录时直接使用，不覆盖其中的数据。迁移失败时继续使用原目录并记录错误。已有下载目录与书籍路径保持有效，新用户默认下载到 `~/Documents/木天下载/`。

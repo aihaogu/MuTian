@@ -2,9 +2,9 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="DeGu"
-DISPLAY_NAME="拾古"
-BUNDLE_ID="dev.local.DeGu"
+APP_NAME="MuTian"
+DISPLAY_NAME="木天"
+BUNDLE_ID="dev.local.MuTian"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +15,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-APP_ICON_SOURCE="$ROOT_DIR/DeGu/Resources/AppIcon.icns"
+APP_ICON_SOURCE="$ROOT_DIR/MuTian/Resources/AppIcon.icns"
 
 cd "$ROOT_DIR"
 
@@ -65,6 +65,9 @@ open_app() {
 }
 
 case "$MODE" in
+  --build|build)
+    echo "Built $APP_BUNDLE"
+    ;;
   run)
     open_app
     ;;
@@ -85,7 +88,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--build|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

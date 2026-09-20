@@ -7,7 +7,7 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RESOURCES = ROOT / "DeGu" / "Resources"
+RESOURCES = ROOT / "MuTian" / "Resources"
 SOURCE = RESOURCES / "AppIconSource.png"
 ICONSET = RESOURCES / "AppIcon.iconset"
 ICNS = RESOURCES / "AppIcon.icns"
