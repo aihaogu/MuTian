@@ -7,44 +7,37 @@ struct DownloadTaskListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("下载")
-                        .font(.headline)
-                    Text("\(downloadStore.tasks.count) 个任务")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            if let error = downloadStore.persistenceError {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(error)
+                        .foregroundStyle(MuTianTheme.cinnabar)
+                        .lineLimit(3)
+                    Spacer(minLength: 4)
+                    Button("重试保存") { downloadStore.flush() }
+                        .controlSize(.small)
                 }
-                Spacer()
-                Button {
-                    downloadStore.addDraft(defaultDirectory: settingsStore.settings.defaultDownloadDirectory)
-                } label: {
-                    Label("新建", systemImage: "plus")
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-
-            VStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(downloadStore.tasks) { task in
-                            DownloadTaskRowView(task: task)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-                .frame(minHeight: 120, idealHeight: 210, maxHeight: 280)
-
+                .font(.caption)
+                .padding(10)
                 Divider()
+            }
 
-                DownloadTaskLogPanel(task: downloadStore.selectedTask)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if downloadStore.tasks.isEmpty {
+                DetailPlaceholder(title: "还没有下载任务", systemImage: "arrow.down.circle", message: "点击工具栏的“新建任务”，粘贴古籍页面链接。")
+            } else {
+                List(selection: $downloadStore.selectedTaskID) {
+                    ForEach(downloadStore.tasks) { task in
+                        DownloadTaskRowView(task: task)
+                            .tag(task.id)
+                    }
+                }
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MuTianTheme.detailBackground)
         .navigationTitle("下载")
+        .navigationSubtitle("\(downloadStore.tasks.count) 个任务")
     }
 }
 
@@ -55,151 +48,84 @@ private struct DownloadTaskRowView: View {
     let task: DownloadTask
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(MuTianTheme.downloadColor(task.status))
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(task.url.isEmpty ? "未填写 URL" : task.url)
-                        .font(.headline)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        StatusBadge(text: task.status.rawValue, color: MuTianTheme.downloadColor(task.status))
-                        Text(task.outputDirectory)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                HStack(spacing: 6) {
-                    Button {
-                        selectTask()
-                        downloadStore.probe(
-                            taskID: task.id,
-                            bookgetPath: settingsStore.settings.bookgetExecutablePath
-                        )
-                    } label: {
-                        if downloadStore.isParsing(taskID: task.id) {
-                            Label("解析中", systemImage: "hourglass")
-                        } else {
-                            Label("解析", systemImage: "doc.text.magnifyingglass")
-                        }
-                    }
-                    .disabled(downloadStore.isParsing(taskID: task.id) || task.status == .running)
-
-                    if task.status == .running {
-                        Button {
-                            selectTask()
-                            downloadStore.cancel(taskID: task.id)
-                        } label: {
-                            Label("取消", systemImage: "stop.fill")
-                        }
-                    } else {
-                        Button {
-                            selectTask()
-                            downloadStore.run(
-                                taskID: task.id,
-                                bookgetPath: settingsStore.settings.bookgetExecutablePath,
-                                libraryStore: libraryStore
-                            )
-                        } label: {
-                            Label("开始下载", systemImage: "play.fill")
-                        }
-                    }
-
-                    Button(role: .destructive) {
-                        downloadStore.delete(taskID: task.id)
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                    .labelStyle(.iconOnly)
-                    .help("删除任务")
-                }
-                .controlSize(.small)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title)
+                    .font(.system(.body, design: task.parsedTitle == nil ? .default : .serif))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                StatusBadge(text: task.status.rawValue, color: MuTianTheme.downloadColor(task.status))
             }
 
-            if let summaryText {
-                Text(summaryText)
+            if let progress = DownloadProgressSnapshot(task: task), task.status == .running {
+                ProgressView(value: Double(progress.completed), total: Double(progress.total))
+                    .controlSize(.small)
+            } else if let subtitle {
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
-
-            if let progress {
-                HStack(spacing: 8) {
-                    ProgressView(value: Double(progress.completed), total: Double(progress.total))
-                    Text("\(progress.completed)/\(progress.total)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-
         }
-        .padding(10)
-        .background(isSelected ? MuTianTheme.accent.opacity(0.10) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? MuTianTheme.accent.opacity(0.30) : MuTianTheme.hairline, lineWidth: 1)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture {
-            selectTask()
-        }
+        .padding(.vertical, 4)
         .contextMenu {
-            if task.status == .running {
-                Button("取消") {
-                    downloadStore.cancel(taskID: task.id)
-                }
-            } else {
-                Button("解析") {
-                    downloadStore.probe(
-                        taskID: task.id,
-                        bookgetPath: settingsStore.settings.bookgetExecutablePath
-                    )
-                }
-                Button("开始下载") {
-                    downloadStore.run(
-                        taskID: task.id,
-                        bookgetPath: settingsStore.settings.bookgetExecutablePath,
-                        libraryStore: libraryStore
-                    )
-                }
-            }
-            Button(role: .destructive) {
-                downloadStore.delete(taskID: task.id)
-            } label: {
-                Text("删除任务")
-            }
+            DownloadTaskActions(task: task, downloadStore: downloadStore, settingsStore: settingsStore, libraryStore: libraryStore).menuItems
         }
     }
 
-    private var isSelected: Bool {
-        downloadStore.selectedTaskID == task.id
+    private var title: String {
+        if let parsedTitle = task.parsedTitle, !parsedTitle.isEmpty { return parsedTitle }
+        return task.url.isEmpty ? "未填写链接" : task.url
     }
 
-    private var summaryText: String? {
-        guard task.parsedTitle != nil || task.parsedVolumeCount != nil else { return nil }
-        let title = task.parsedTitle ?? "未识别书名"
-        if let volumeCount = task.parsedVolumeCount {
-            return "\(title) · \(volumeCount) 册"
-        }
-        return title
+    private var subtitle: String? {
+        var parts: [String] = []
+        if task.parsedTitle != nil, !task.url.isEmpty { parts.append(task.url) }
+        if let volumeCount = task.parsedVolumeCount { parts.append("\(volumeCount) 册") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+}
 
-    private var progress: DownloadProgressSnapshot? {
-        DownloadProgressSnapshot(task: task)
-    }
+@MainActor
+private struct DownloadTaskActions {
+    let task: DownloadTask
+    let downloadStore: DownloadTaskStore
+    let settingsStore: SettingsStore
+    let libraryStore: LibraryStore
 
-    private func selectTask() {
+    var isParsing: Bool { downloadStore.isParsing(taskID: task.id) }
+    var isRunning: Bool { task.status == .running }
+
+    func probe() {
         downloadStore.selectedTaskID = task.id
+        downloadStore.probe(taskID: task.id, bookgetPath: settingsStore.settings.bookgetExecutablePath)
+    }
+
+    func run() {
+        downloadStore.selectedTaskID = task.id
+        downloadStore.run(taskID: task.id, bookgetPath: settingsStore.settings.bookgetExecutablePath, libraryStore: libraryStore)
+    }
+
+    func cancel() {
+        downloadStore.cancel(taskID: task.id)
+    }
+
+    func delete() {
+        downloadStore.delete(taskID: task.id)
+    }
+
+    @ViewBuilder
+    var menuItems: some View {
+        if isRunning {
+            Button("取消下载", action: cancel)
+        } else {
+            Button("解析", action: probe).disabled(isParsing)
+            Button("开始下载", action: run).disabled(isParsing)
+        }
+        Divider()
+        Button("删除任务", role: .destructive, action: delete)
     }
 }
 
@@ -232,90 +158,121 @@ private struct DownloadProgressSnapshot {
     }
 }
 
-private struct DownloadTaskLogPanel: View {
-    let task: DownloadTask?
+struct DownloadDetailView: View {
+    @EnvironmentObject private var downloadStore: DownloadTaskStore
+    @EnvironmentObject private var settingsStore: SettingsStore
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @State private var showsAdvanced = false
+    @State private var showsLog = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("日志")
-                .font(.headline)
+        if let task = downloadStore.selectedTask {
+            let actions = DownloadTaskActions(task: task, downloadStore: downloadStore, settingsStore: settingsStore, libraryStore: libraryStore)
+            let isLocked = actions.isRunning || actions.isParsing
+            VStack(spacing: 0) {
+                header(task, actions: actions)
+                Divider()
+                Form {
+                    Section("任务") {
+                        TextField("链接", text: binding(task, \.url), prompt: Text("古籍页面或 IIIF manifest 地址"))
+                        LabeledContent("输出目录") {
+                            HStack(spacing: 8) {
+                                Text(task.outputDirectory.isEmpty ? "未选择" : task.outputDirectory)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .help(task.outputDirectory)
+                                Button("选择…") { chooseOutputDirectory(for: task) }
+                            }
+                        }
+                        Picker("下载模式", selection: intBinding(task, \.mode)) {
+                            Text("默认").tag(0)
+                            Text("通用批量").tag(1)
+                            Text("IIIF manifest").tag(2)
+                        }
+                        TextField("页码范围", text: binding(task, \.sequenceRange), prompt: Text("如 4:434，留空为全部"))
+                        TextField("册数范围", text: binding(task, \.volumeRange), prompt: Text("如 1:10，留空为全部"))
+                    }
+                    .disabled(isLocked)
 
-            if let task {
-                ScrollView {
-                    Text(logText(for: task).isEmpty ? "暂无日志" : logText(for: task))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(logText(for: task).isEmpty ? .secondary : .primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(10)
+                    Section {
+                        DisclosureGroup("高级参数", isExpanded: $showsAdvanced) {
+                            TextField("IIIF 格式", text: binding(task, \.format))
+                            TextField("扩展名", text: binding(task, \.fileExt))
+                            Stepper("线程　\(task.threads)", value: intBinding(task, \.threads), in: 1...64)
+                            Stepper("并发　\(task.concurrent)", value: intBinding(task, \.concurrent), in: 1...128)
+                            Stepper("重试　\(task.retries) 次", value: intBinding(task, \.retries), in: 0...20)
+                            Stepper("超时　\(task.timeoutSeconds) 秒", value: intBinding(task, \.timeoutSeconds), in: 10...3600)
+                            Stepper("间隔　\(task.sleepSeconds) 秒", value: intBinding(task, \.sleepSeconds), in: 0...120)
+                        }
+                    }
+                    .disabled(isLocked)
+
+                    Section {
+                        DisclosureGroup("日志", isExpanded: $showsLog) {
+                            ScrollView {
+                                Text(logText(for: task).isEmpty ? "暂无日志" : logText(for: task))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(logText(for: task).isEmpty ? .secondary : .primary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                            }
+                            .frame(minHeight: 120, maxHeight: 280)
+                        }
+                    }
                 }
-                .background(Color.primary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                Text("选择一个下载任务后显示日志。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
             }
+            .background(MuTianTheme.detailBackground)
+        } else {
+            DetailPlaceholder(title: "选择或新建下载任务", systemImage: "arrow.down.circle", message: "在左侧选择任务，或点击工具栏的“新建任务”。")
         }
-        .padding(12)
+    }
+
+    private func header(_ task: DownloadTask, actions: DownloadTaskActions) -> some View {
+        HStack(spacing: 10) {
+            StatusBadge(text: task.status.rawValue, color: MuTianTheme.downloadColor(task.status))
+
+            if let progress = DownloadProgressSnapshot(task: task) {
+                ProgressView(value: Double(progress.completed), total: Double(progress.total))
+                    .frame(maxWidth: 220)
+                Text("\(progress.completed)/\(progress.total)")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            if actions.isRunning {
+                Button("取消", systemImage: "stop.fill", action: actions.cancel)
+            } else {
+                Button(actions.isParsing ? "解析中…" : "解析", systemImage: "doc.text.magnifyingglass", action: actions.probe)
+                    .disabled(actions.isParsing || task.url.isEmpty)
+                Button("开始下载", systemImage: "arrow.down", action: actions.run)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(actions.isParsing || task.url.isEmpty)
+            }
+
+            Menu {
+                Button("删除任务", role: .destructive, action: actions.delete)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("更多操作")
+        }
+        .controlSize(.regular)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private func logText(for task: DownloadTask) -> String {
         [task.stdoutLog, task.stderrLog].filter { !$0.isEmpty }.joined(separator: "\n")
-    }
-}
-
-struct DownloadDetailView: View {
-    @EnvironmentObject private var downloadStore: DownloadTaskStore
-    @EnvironmentObject private var settingsStore: SettingsStore
-
-    var body: some View {
-        if let task = downloadStore.selectedTask {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Form {
-                        Section("任务") {
-                            TextField("URL", text: binding(task, \.url))
-                            HStack {
-                                TextField("输出目录", text: binding(task, \.outputDirectory))
-                                Button {
-                                    chooseOutputDirectory(for: task)
-                                } label: {
-                                    Label("选择", systemImage: "folder")
-                                }
-                            }
-                            Picker("下载模式", selection: intBinding(task, \.mode)) {
-                                Text("默认").tag(0)
-                                Text("通用批量").tag(1)
-                                Text("IIIF manifest").tag(2)
-                            }
-                            TextField("页码范围，如 4:434", text: binding(task, \.sequenceRange))
-                            TextField("册数范围，如 1:10", text: binding(task, \.volumeRange))
-                        }
-
-                        Section("参数") {
-                            TextField("IIIF format", text: binding(task, \.format))
-                            TextField("扩展名", text: binding(task, \.fileExt))
-                            Stepper("线程：\(task.threads)", value: intBinding(task, \.threads), in: 1...64)
-                            Stepper("并发：\(task.concurrent)", value: intBinding(task, \.concurrent), in: 1...128)
-                            Stepper("重试：\(task.retries)", value: intBinding(task, \.retries), in: 0...20)
-                            Stepper("超时：\(task.timeoutSeconds) 秒", value: intBinding(task, \.timeoutSeconds), in: 10...3600)
-                            Stepper("间隔：\(task.sleepSeconds) 秒", value: intBinding(task, \.sleepSeconds), in: 0...120)
-                        }
-                    }
-                    .formStyle(.grouped)
-                    .muTianPanel()
-
-                }
-                .padding(18)
-            }
-            .background(MuTianTheme.detailBackground)
-        } else {
-            DetailPlaceholder(title: "选择或新建下载任务", systemImage: "arrow.down.circle", message: "点击下载列表中的“新建”后再填写下载配置。")
-        }
     }
 
     private func binding(_ task: DownloadTask, _ keyPath: WritableKeyPath<DownloadTask, String>) -> Binding<String> {

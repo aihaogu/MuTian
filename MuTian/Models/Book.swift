@@ -43,6 +43,8 @@ struct Book: Identifiable, Codable, Hashable, Sendable {
     var lastReadPage: Int
     var lastReadAt: Date?
     var pageRecords: [PageRecord]
+    // Keep annotations for removed/replaced pages available for later recovery.
+    var archivedPageRecords: [PageRecord]? = nil
 
     static func new(
         title: String,
@@ -85,4 +87,5 @@ struct PageRecord: Identifiable, Codable, Hashable, Sendable {
     var correctedText: String
     var notes: String
     var status: String
+    var fileIdentity: String? = nil
 }

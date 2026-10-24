@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import sys
+import os
+
+if getattr(sys, "frozen", False):
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bookget_py"))

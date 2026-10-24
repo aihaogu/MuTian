@@ -2,17 +2,30 @@ import SwiftUI
 
 struct SidebarView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
-    @State private var expandedClassificationIDs: Set<String> = Set(["jing", "shi", "zi", "ji", "other"])
+    @EnvironmentObject private var downloadStore: DownloadTaskStore
+    @State private var expandedClassificationIDs: Set<String> = []
 
     var body: some View {
+        let counts = ClassificationCounts(books: libraryStore.books, store: libraryStore)
+
         List(selection: $libraryStore.sidebarSelection) {
             Section {
                 Label("浏览", systemImage: "books.vertical")
+                    .badge(libraryStore.books.count)
                     .tag(SidebarSelection.all)
                 Label("收藏", systemImage: "star")
+                    .badge(libraryStore.books.filter(\.isFavorite).count)
                     .tag(SidebarSelection.favorites)
-                Label("下载", systemImage: "arrow.down.circle")
-                    .tag(SidebarSelection.downloads)
+                HStack {
+                    Label("下载", systemImage: "arrow.down.circle")
+                    Spacer(minLength: 4)
+                    if downloadStore.hasRunningTasks {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .help("有下载任务正在运行")
+                    }
+                }
+                .tag(SidebarSelection.downloads)
                 Label("统计", systemImage: "chart.bar")
                     .tag(SidebarSelection.statistics)
             }
@@ -21,65 +34,104 @@ struct SidebarView: View {
                 ForEach(libraryStore.children(of: nil)) { node in
                     ClassificationSidebarRow(
                         node: node,
-                        level: 0,
+                        counts: counts,
                         expandedClassificationIDs: $expandedClassificationIDs
                     )
-                }
-            }
-
-            Section("整理状态") {
-                ForEach(BookStatus.allCases) { status in
-                    Label(status.rawValue, systemImage: statusIcon(status))
-                        .tag(SidebarSelection.status(status))
-                }
-            }
-
-            if !libraryStore.sources.isEmpty {
-                Section("来源") {
-                    ForEach(libraryStore.sources, id: \.self) { source in
-                        Label(source, systemImage: "building.columns")
-                            .tag(SidebarSelection.source(source))
-                    }
                 }
             }
         }
         .listStyle(.sidebar)
         .navigationTitle("木天")
-        .overlay(alignment: .bottomLeading) {
-            VStack(alignment: .leading, spacing: 4) {
-                if libraryStore.isScanning {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                if !libraryStore.lastImportMessage.isEmpty {
-                    Text(libraryStore.lastImportMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            .padding(10)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(8)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            SidebarStatusStrip()
+        }
+        .onAppear(perform: expandSelectedSection)
+        .onChange(of: libraryStore.sidebarSelection) { _, _ in
+            expandSelectedSection()
         }
     }
 
-    private func statusIcon(_ status: BookStatus) -> String {
-        switch status {
-        case .pending: return "tray"
-        case .organized: return "checkmark.circle"
-        case .needsProofreading: return "exclamationmark.bubble"
-        case .proofreading: return "pencil.and.outline"
-        case .proofread: return "checkmark.seal"
+    private func expandSelectedSection() {
+        guard case .classification(let id) = libraryStore.sidebarSelection,
+              let top = topAncestorID(of: id) else { return }
+        expandedClassificationIDs = [top]
+    }
+
+    private func topAncestorID(of id: String) -> String? {
+        var current = libraryStore.classifications.first { $0.id == id }
+        while let parentID = current?.parentID {
+            current = libraryStore.classifications.first { $0.id == parentID }
         }
+        return current?.id
+    }
+}
+
+private struct SidebarStatusStrip: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+
+    var body: some View {
+        let hasContent = libraryStore.isScanning
+            || libraryStore.loadError != nil
+            || libraryStore.saveError != nil
+            || !libraryStore.lastImportMessage.isEmpty
+
+        if hasContent {
+            VStack(alignment: .leading, spacing: 6) {
+                if let error = libraryStore.saveError {
+                    Text(error)
+                        .foregroundStyle(MuTianTheme.cinnabar)
+                        .lineLimit(3)
+                    Button("重试保存") { libraryStore.flush() }
+                        .controlSize(.small)
+                }
+                if libraryStore.loadError != nil {
+                    Button("从备份恢复资料库…") { libraryStore.presentRecoveryPanel() }
+                        .controlSize(.small)
+                }
+                if libraryStore.isScanning || !libraryStore.lastImportMessage.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if libraryStore.isScanning {
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
+                        Text(libraryStore.lastImportMessage)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .help(libraryStore.lastImportMessage)
+                    }
+                }
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) { Divider() }
+        }
+    }
+}
+
+private struct ClassificationCounts {
+    private var direct: [String: Int] = [:]
+    private let store: LibraryStore
+
+    @MainActor
+    init(books: [Book], store: LibraryStore) {
+        self.store = store
+        for book in books {
+            direct[book.classificationID, default: 0] += 1
+        }
+    }
+
+    @MainActor
+    func total(for id: String) -> Int {
+        store.children(of: id).reduce(direct[id] ?? 0) { $0 + total(for: $1.id) }
     }
 }
 
 private struct ClassificationSidebarRow: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let node: Classification
-    let level: Int
+    let counts: ClassificationCounts
     @Binding var expandedClassificationIDs: Set<String>
 
     var body: some View {
@@ -91,7 +143,7 @@ private struct ClassificationSidebarRow: View {
                 ForEach(children) { child in
                     ClassificationSidebarRow(
                         node: child,
-                        level: level + 1,
+                        counts: counts,
                         expandedClassificationIDs: $expandedClassificationIDs
                     )
                 }
@@ -102,20 +154,14 @@ private struct ClassificationSidebarRow: View {
     }
 
     private var rowLabel: some View {
-        HStack(spacing: 8) {
-            Image(systemName: iconName)
-                .foregroundStyle(isSelected ? MuTianTheme.accent : .secondary)
-                .frame(width: 16)
-            Text(node.name)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, CGFloat(level * 12))
-        .foregroundStyle(isSelected ? MuTianTheme.accent : .primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            libraryStore.sidebarSelection = .classification(node.id)
-        }
+        Label(node.name, systemImage: iconName)
+            .lineLimit(1)
+            .badge(counts.total(for: node.id))
+            .tag(SidebarSelection.classification(node.id))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                libraryStore.sidebarSelection = .classification(node.id)
+            }
     }
 
     private var expandedBinding: Binding<Bool> {
@@ -130,11 +176,8 @@ private struct ClassificationSidebarRow: View {
         }
     }
 
-    private var isSelected: Bool {
-        libraryStore.sidebarSelection == .classification(node.id)
-    }
-
     private var iconName: String {
-        node.id == Classification.defaultUnclassifiedID ? "tray" : "folder"
+        if node.id == Classification.defaultUnclassifiedID { return "tray" }
+        return node.parentID == nil ? "books.vertical" : "folder"
     }
 }

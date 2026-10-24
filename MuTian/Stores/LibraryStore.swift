@@ -4,6 +4,15 @@ import Foundation
 @MainActor
 final class LibraryStore: ObservableObject {
     private var isLoading = false
+    private let libraryFile: URL
+    private let scanner: @Sendable (URL) -> ScanResult
+    private var importTail: Task<LibraryImportResult, Never>?
+    private var importToken: UUID?
+    @Published private(set) var loadError: String?
+    @Published private(set) var saveError: String?
+    private lazy var writer = SnapshotWriter<LibrarySnapshot>(url: libraryFile) { [weak self] error in
+        Task { @MainActor [weak self] in self?.saveError = error }
+    }
     @Published var books: [Book] = [] {
         didSet { save() }
     }
@@ -18,7 +27,9 @@ final class LibraryStore: ObservableObject {
     @Published var isScanning: Bool = false
     @Published var lastImportMessage: String = ""
 
-    init() {
+    init(libraryFile: URL? = nil, scanner: @escaping @Sendable (URL) -> ScanResult = { FolderScanner.scan(root: $0) }) {
+        self.scanner = scanner
+        self.libraryFile = libraryFile ?? AppPaths.libraryFile
         load()
     }
 
@@ -85,6 +96,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func presentImportPanel() {
+        guard loadError == nil else { presentRecoveryPanel(); return }
         let panel = NSOpenPanel()
         panel.title = "导入古籍文件夹或 PDF"
         panel.message = "选择本地文件夹或 PDF 后导入到资料库。"
@@ -98,19 +110,37 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func importURLs(_ urls: [URL]) async {
-        guard !urls.isEmpty, !isScanning else { return }
+    @discardableResult
+    func importURLs(_ urls: [URL], shouldImport: @escaping @MainActor () -> Bool = { true }) async -> LibraryImportResult {
+        guard !urls.isEmpty else { return .empty }
+        let previous = importTail
+        let token = UUID()
+        importToken = token
+        let operation = Task {
+            if let previous { _ = await previous.value }
+            guard shouldImport() else { return LibraryImportResult.empty }
+            return await self.performImport(urls)
+        }
+        importTail = operation
+        let result = await operation.value
+        if importToken == token { importTail = nil; importToken = nil }
+        return result
+    }
+
+    private func performImport(_ urls: [URL]) async -> LibraryImportResult {
+        guard loadError == nil else { return .empty }
         let accessibleURLs = urls.filter { FileManager.default.isReadableFile(atPath: $0.path) }
         let unavailableCount = urls.count - accessibleURLs.count
         guard !accessibleURLs.isEmpty else {
             lastImportMessage = "文件或目录不可用，请重新定位；已有书目已保留。"
-            return
+            return .empty
         }
         isScanning = true
         lastImportMessage = "正在扫描 \(urls.count) 个路径..."
 
+        let scan = scanner
         let results = await Task.detached(priority: .userInitiated) {
-            accessibleURLs.map { FolderScanner.scan(root: $0) }
+            accessibleURLs.map(scan)
         }.value
 
         var imported = 0
@@ -152,14 +182,19 @@ final class LibraryStore: ObservableObject {
             }
         }
 
+        isLoading = true
         roots = updatedRoots
         books = updatedBooks
+        isLoading = false
+        save()
         isScanning = false
         lastImportMessage = "导入完成：新增 \(imported) 部，更新 \(refreshed) 部，移除失效条目 \(removed) 部。"
         if unavailableCount > 0 || results.contains(where: { !$0.isComplete }) {
             lastImportMessage += " 部分路径不可用，相关旧书目已保留。"
         }
         syncSelectionWithFilter()
+        let scannedPaths = Set(results.flatMap { $0.books.map(\.localPath) })
+        return LibraryImportResult(bookIDs: books.filter { scannedPaths.contains($0.localPath) }.map(\.id))
     }
 
     func rescanKnownRoots() async {
@@ -168,7 +203,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func update(_ book: Book) {
-        guard let index = books.firstIndex(where: { $0.id == book.id }) else { return }
+        guard loadError == nil, let index = books.firstIndex(where: { $0.id == book.id }) else { return }
         var updated = book
         updated.updatedAt = Date()
         books[index] = updated
@@ -183,9 +218,10 @@ final class LibraryStore: ObservableObject {
     func updateReadProgress(bookID: UUID, page: Int) {
         guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
         guard books[index].lastReadPage != max(0, page) else { return }
-        books[index].lastReadPage = max(0, page)
-        books[index].lastReadAt = Date()
-        books[index].updatedAt = Date()
+        var updated = books[index]
+        updated.lastReadPage = max(0, page)
+        updated.lastReadAt = Date()
+        update(updated)
     }
 
     func selectBook(_ book: Book) {
@@ -209,11 +245,12 @@ final class LibraryStore: ObservableObject {
         panel.canChooseFiles = book.fileType != .imageSequence
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard loadError == nil, flush() else { return }
         var snapshot = LibrarySnapshot(books: books, roots: roots)
         guard LibraryPathRepair.repair(&snapshot, from: URL(fileURLWithPath: book.localPath), to: url) > 0 else { return }
         do {
-            let backup = AppPaths.supportDirectory.appendingPathComponent("library-before-relocation-\(UUID().uuidString).json")
-            try FileManager.default.copyItem(at: AppPaths.libraryFile, to: backup)
+            let backup = libraryFile.deletingLastPathComponent().appendingPathComponent("library-before-relocation-\(UUID().uuidString).json")
+            try FileManager.default.copyItem(at: libraryFile, to: backup)
         } catch {
             lastImportMessage = "无法备份资料库，未修改文件位置：\(error.localizedDescription)"
             return
@@ -273,11 +310,8 @@ final class LibraryStore: ObservableObject {
         fill(\.sourceName, with: scanned.sourceName)
         fill(\.sourceURL, with: scanned.sourceURL)
 
-        if scanned.fileType == .imageSequence,
-           (current.pageRecords.isEmpty || current.pageRecords.count != scanned.pageRecords.count) {
-            current.pageRecords = scanned.pageRecords
-            current.pageCount = scanned.pageCount
-            changed = true
+        if scanned.fileType == .imageSequence {
+            changed = PageRecordMerger.merge(scanned.pageRecords, into: &current) || changed
         }
 
         if changed {
@@ -293,34 +327,76 @@ final class LibraryStore: ObservableObject {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: AppPaths.libraryFile),
-              var snapshot = try? JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data) else {
-            return
-        }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let changes = LibraryPathRepair.repair(&snapshot,
-            from: home.appendingPathComponent("得古测试"),
-            to: home.appendingPathComponent("木天测试"))
-        if changes > 0 {
-            let backup = AppPaths.supportDirectory.appendingPathComponent("library-before-path-repair-\(UUID().uuidString).json")
-            do {
-                try data.write(to: backup, options: [.atomic])
-            } catch {
-                snapshot = (try? JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data)) ?? snapshot
-                lastImportMessage = "路径修复前无法备份资料库：\(error.localizedDescription)"
+        guard FileManager.default.fileExists(atPath: libraryFile.path) else { return }
+        do {
+            let data = try Data(contentsOf: libraryFile)
+            var snapshot = try JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data)
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let changes = LibraryPathRepair.repair(&snapshot,
+                from: home.appendingPathComponent("得古测试"),
+                to: home.appendingPathComponent("木天测试"))
+            if changes > 0 {
+                let backup = libraryFile.deletingLastPathComponent().appendingPathComponent("library-before-path-repair-\(UUID().uuidString).json")
+                do { try data.write(to: backup, options: [.atomic]) }
+                catch {
+                    snapshot = try JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data)
+                    lastImportMessage = "路径修复前无法备份资料库：\(error.localizedDescription)"
+                }
             }
+            isLoading = true
+            books = snapshot.books
+            roots = snapshot.roots
+            isLoading = false
+            if changes > 0 { save() }
+        } catch {
+            loadError = "无法读取资料库，原索引已保护：\(error.localizedDescription)"
+            lastImportMessage = loadError ?? ""
         }
+    }
+
+    func presentRecoveryPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "从备份恢复资料库"
+        panel.message = "选择有效的 library.json 备份。替换前会保留当前索引副本。"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try restore(from: url) }
+        catch { lastImportMessage = "恢复失败，原索引未替换：\(error.localizedDescription)" }
+    }
+
+    func restore(from backupURL: URL) throws {
+        let data = try Data(contentsOf: backupURL)
+        let snapshot = try JSONDecoder.muTian.decode(LibrarySnapshot.self, from: data)
+        try writer.flush()
+        if FileManager.default.fileExists(atPath: libraryFile.path) {
+            let preserved = libraryFile.deletingLastPathComponent().appendingPathComponent("library-before-recovery-\(UUID().uuidString).json")
+            try FileManager.default.copyItem(at: libraryFile, to: preserved)
+        }
+        try data.write(to: libraryFile, options: [.atomic])
         isLoading = true
         books = snapshot.books
         roots = snapshot.roots
         isLoading = false
-        if changes > 0 { save() }
+        loadError = nil
+        saveError = nil
+        lastImportMessage = "已从备份恢复资料库。"
+        syncSelectionWithFilter()
+    }
+
+    @discardableResult
+    func flush() -> Bool {
+        do { try writer.flush(); saveError = nil; return true }
+        catch { saveError = "资料库保存失败：\(error.localizedDescription)"; return false }
     }
 
     private func save() {
-        guard !isLoading else { return }
-        let snapshot = LibrarySnapshot(books: books, roots: roots)
-        guard let data = try? JSONEncoder.muTian.encode(snapshot) else { return }
-        try? data.write(to: AppPaths.libraryFile, options: [.atomic])
+        guard !isLoading, loadError == nil else { return }
+        writer.schedule(LibrarySnapshot(books: books, roots: roots))
     }
+}
+
+struct LibraryImportResult: Sendable {
+    let bookIDs: [UUID]
+    static let empty = LibraryImportResult(bookIDs: [])
 }

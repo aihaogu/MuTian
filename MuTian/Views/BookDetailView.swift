@@ -1,84 +1,102 @@
 import SwiftUI
 
+private enum BookDetailTab: String, CaseIterable, Identifiable {
+    case reader = "阅读"
+    case metadata = "书目"
+
+    var id: String { rawValue }
+}
+
 struct BookDetailView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let bookID: UUID?
+    @State private var tab: BookDetailTab = .reader
 
     var body: some View {
         if let bookID, let book = libraryStore.books.first(where: { $0.id == bookID }) {
             VStack(spacing: 0) {
-                BookHeaderView(book: book)
+                BookHeaderView(book: book, tab: $tab)
                 Divider()
-                TabView {
+                switch tab {
+                case .reader:
                     ReaderView(book: book)
                         .id("\(book.id)|\(book.localPath)")
-                        .tabItem { Label("阅读", systemImage: "book") }
+                case .metadata:
                     BookMetadataEditor(book: book)
-                        .tabItem { Label("书目", systemImage: "info.circle") }
-                    PageNotesPlaceholder(book: book)
-                        .tabItem { Label("校书", systemImage: "pencil.and.scribble") }
                 }
             }
             .background(MuTianTheme.detailBackground)
+            .onChange(of: bookID) { _, _ in tab = .reader }
         } else {
             DetailPlaceholder(
                 title: "未选择古籍",
                 systemImage: "books.vertical",
-                message: "导入文件夹后，在中间浏览页选择一部古籍。"
+                message: "在左侧书单中选择一部古籍。"
             )
         }
     }
 }
 
-struct BookHeaderView: View {
+private struct BookHeaderView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let book: Book
+    @Binding var tab: BookDetailTab
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            BookCoverThumbnailView(book: book, cornerRadius: 6, showsShadow: false)
-                .frame(width: 44, height: 58)
+        HStack(spacing: 10) {
+            Text(book.title)
+                .font(.system(.title3, design: .serif))
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(book.title)
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(book.title)
-                        .font(.system(.title2, design: .serif))
-                        .fontWeight(.semibold)
-                        .lineLimit(2)
-                    StatusBadge(text: book.status.rawValue, color: MuTianTheme.statusColor(book.status))
-                }
+            if !book.author.isEmpty {
+                Text(book.author)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
 
-                HStack(spacing: 6) {
-                    MetaPill(text: libraryStore.classificationName(for: book.classificationID), systemImage: "square.grid.2x2", color: MuTianTheme.accent)
-                    MetaPill(text: book.fileType.rawValue, systemImage: "doc.richtext", color: MuTianTheme.indigo)
-                    if book.pageCount > 0 {
-                        MetaPill(text: "\(book.pageCount) 页", systemImage: "number", color: .secondary)
-                    }
-                    if !book.sourceName.isEmpty {
-                        MetaPill(text: book.sourceName, systemImage: "building.columns", color: MuTianTheme.jade)
-                    }
+            Spacer(minLength: 12)
+
+            Picker("视图", selection: $tab) {
+                ForEach(BookDetailTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
             }
-            Spacer()
-            Button {
-                libraryStore.toggleFavorite(book)
-            } label: {
-                Label(book.isFavorite ? "已收藏" : "收藏", systemImage: book.isFavorite ? "star.fill" : "star")
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+
+            HStack(spacing: 2) {
+                Button {
+                    libraryStore.toggleFavorite(book)
+                } label: {
+                    Image(systemName: book.isFavorite ? "star.fill" : "star")
+                        .foregroundStyle(book.isFavorite ? MuTianTheme.cinnabar : .secondary)
+                }
+                .help(book.isFavorite ? "取消收藏" : "收藏")
+
+                Button {
+                    libraryStore.revealInFinder(book)
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .help("在 Finder 中显示")
+
+                Button {
+                    libraryStore.setBookDetailVisible(false)
+                } label: {
+                    Image(systemName: "sidebar.right")
+                }
+                .help("收起详情")
             }
-            Button {
-                libraryStore.revealInFinder(book)
-            } label: {
-                Label("Finder", systemImage: "folder")
-            }
-            Button {
-                libraryStore.setBookDetailVisible(false)
-            } label: {
-                Label("收起详情", systemImage: "sidebar.right")
-            }
-            .labelStyle(.iconOnly)
-            .help("收起书籍详情")
+            .buttonStyle(.borderless)
+            .imageScale(.large)
         }
-        .padding(18)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .background(.bar)
     }
 }
@@ -88,56 +106,54 @@ struct BookMetadataEditor: View {
     let book: Book
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Form {
-                    Section("基本书目") {
-                        TextField("书名", text: binding(\.title))
-                        TextField("作者", text: binding(\.author))
-                        TextField("朝代", text: binding(\.dynasty))
-                        TextField("版本", text: binding(\.edition))
-                    }
+        Form {
+            Section("基本书目") {
+                TextField("书名", text: binding(\.title))
+                TextField("作者", text: binding(\.author))
+                TextField("朝代", text: binding(\.dynasty))
+                TextField("版本", text: binding(\.edition))
+            }
 
-                    Section("分类整理") {
-                        Picker("四库分类", selection: classificationBinding) {
-                            ForEach(libraryStore.classifications.sorted { $0.sortOrder < $1.sortOrder }) { node in
-                                Text(libraryStore.classificationName(for: node.id)).tag(node.id)
-                            }
-                        }
-
-                        Picker("整理状态", selection: statusBinding) {
-                            ForEach(BookStatus.allCases) { status in
-                                Text(status.rawValue).tag(status)
-                            }
-                        }
-
-                        TextField("标签（用空格分隔）", text: tagsBinding)
-                    }
-
-                    Section("来源和备注") {
-                        TextField("来源", text: binding(\.sourceName))
-                        TextField("来源 URL", text: binding(\.sourceURL))
-                        TextField("备注", text: binding(\.notes), axis: .vertical)
-                            .lineLimit(4...8)
+            Section("分类整理") {
+                Picker("四库分类", selection: classificationBinding) {
+                    ForEach(libraryStore.classifications.sorted { $0.sortOrder < $1.sortOrder }) { node in
+                        Text(libraryStore.classificationName(for: node.id)).tag(node.id)
                     }
                 }
-                .formStyle(.grouped)
-                .muTianPanel()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("文件位置")
-                        .font(.headline)
+                Picker("整理状态", selection: statusBinding) {
+                    ForEach(BookStatus.allCases) { status in
+                        Text(status.rawValue).tag(status)
+                    }
+                }
+
+                TextField("标签", text: tagsBinding, prompt: Text("用空格分隔"))
+            }
+
+            Section("来源和备注") {
+                TextField("来源", text: binding(\.sourceName))
+                TextField("来源链接", text: binding(\.sourceURL))
+                TextField("备注", text: binding(\.notes), axis: .vertical)
+                    .lineLimit(3...8)
+            }
+
+            Section("文件") {
+                LabeledContent("格式", value: book.fileType.rawValue)
+                if book.pageCount > 0 {
+                    LabeledContent("页数", value: "\(book.pageCount) 页")
+                }
+                LabeledContent("位置") {
                     Text(book.localPath)
-                        .font(.callout)
                         .foregroundStyle(.secondary)
-                        .lineLimit(3)
+                        .lineLimit(2)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
+                        .help(book.localPath)
                 }
-                .muTianPanel()
             }
-            .padding(18)
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .background(MuTianTheme.detailBackground)
     }
 
@@ -185,28 +201,5 @@ struct BookMetadataEditor: View {
                 libraryStore.update(edited)
             }
         )
-    }
-}
-
-struct PageNotesPlaceholder: View {
-    let book: Book
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("校书工作台")
-                .font(.title3)
-                .fontWeight(.semibold)
-            Text("当前已为页级 OCR、人工校对文本和页备注预留数据结构。后续可在这里做影像/文本对照、逐页校改、校记和版本对读。")
-                .foregroundStyle(.secondary)
-            Divider()
-            HStack(spacing: 8) {
-                StatusBadge(text: book.status.rawValue, color: MuTianTheme.statusColor(book.status))
-                MetaPill(text: "\(book.pageCount) 页", systemImage: "doc", color: .secondary)
-            }
-        }
-        .muTianPanel()
-        .padding(18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MuTianTheme.detailBackground)
     }
 }

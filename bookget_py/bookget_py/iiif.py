@@ -4,11 +4,12 @@ import json
 from typing import Any
 
 from .config import Config
+from .results import DownloadResult
 from .downloader import download_urls
 from .http import get_bytes
 
 
-def download_manifest(url: str, config: Config, headers: dict[str, str]) -> int:
+def download_manifest(url: str, config: Config, headers: dict[str, str]) -> DownloadResult:
     raw = get_bytes(url, headers, timeout=config.timeout, retries=config.retries)
     start = raw.find(b"{")
     if start > 0:

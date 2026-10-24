@@ -3,10 +3,12 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadStore: DownloadTaskStore
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     var body: some View {
         NavigationSplitView {
             SidebarView()
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             workspace
         }
@@ -20,45 +22,32 @@ struct ContentView: View {
         .tint(MuTianTheme.accent)
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    libraryStore.presentImportPanel()
-                } label: {
-                    Label("导入", systemImage: "square.and.arrow.down")
-                }
-                .help("导入本地古籍条目")
-
-                Button {
-                    libraryStore.sidebarSelection = .downloads
-                } label: {
-                    if downloadStore.hasRunningTasks {
-                        Label {
-                            Text("下载")
-                        } icon: {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    } else {
-                        Label("下载", systemImage: "arrow.down.circle")
-                    }
-                }
-                .help("打开下载")
-
-                if libraryStore.sidebarSelection.usesBookDetail {
+                switch libraryStore.sidebarSelection {
+                case .downloads:
                     Button {
-                        libraryStore.setBookDetailVisible(!libraryStore.isBookDetailVisible)
+                        downloadStore.addDraft(settings: settingsStore.settings)
                     } label: {
-                        Label(libraryStore.isBookDetailVisible ? "收起详情" : "展开详情", systemImage: "sidebar.right")
+                        Label("新建任务", systemImage: "plus")
                     }
-                    .disabled(libraryStore.selectedBookID == nil)
-                    .help(libraryStore.isBookDetailVisible ? "收起书籍详情" : "展开书籍详情")
-                }
+                    .help("新建下载任务")
+                case .statistics:
+                    EmptyView()
+                default:
+                    Button {
+                        libraryStore.presentImportPanel()
+                    } label: {
+                        Label("导入", systemImage: "square.and.arrow.down")
+                    }
+                    .help("导入本地古籍条目")
 
-                Button {
-                    Task { await libraryStore.rescanKnownRoots() }
-                } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
+                    Button {
+                        Task { await libraryStore.rescanKnownRoots() }
+                    } label: {
+                        Label("刷新", systemImage: "arrow.clockwise")
+                    }
+                    .help("重新扫描已导入的目录")
+                    .disabled(libraryStore.roots.isEmpty || libraryStore.isScanning)
                 }
-                .disabled(libraryStore.roots.isEmpty || libraryStore.isScanning)
             }
         }
     }
@@ -69,17 +58,12 @@ struct ContentView: View {
         case .downloads:
             HSplitView {
                 DownloadTaskListView()
-                    .frame(minWidth: 280, idealWidth: 360)
+                    .frame(minWidth: 260, idealWidth: 320, maxWidth: 460)
                 DownloadDetailView()
-                    .frame(minWidth: 360)
+                    .frame(minWidth: 420)
             }
         case .statistics:
-            HSplitView {
-                StatisticsView()
-                    .frame(minWidth: 280, idealWidth: 360)
-                StatisticsDetailView()
-                    .frame(minWidth: 360)
-            }
+            StatisticsView()
         default:
             HSplitView {
                 LibraryListView()

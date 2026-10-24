@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from urllib.parse import urlparse
+from dataclasses import replace
+
+from .download_identity import source_directory
+from .results import DownloadResult
 
 from .config import Config
 from .downloader import download_urls, expand_template
@@ -26,7 +30,8 @@ SUPPORTED_DOMAINS = {
 }
 
 
-def route_and_download(url: str, config: Config, headers: dict[str, str]) -> int:
+def route_and_download(url: str, config: Config, headers: dict[str, str]) -> DownloadResult:
+    config = replace(config, directory=source_directory(config.directory, url))
     lowered = url.lower()
     parsed = urlparse(url)
     host = parsed.netloc

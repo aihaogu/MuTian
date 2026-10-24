@@ -52,6 +52,7 @@ enum AppPaths {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let candidates = [
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/bookget/bookget").path,
             bundleRoot.appendingPathComponent("bin/bookget").path,
             bundleRoot.appendingPathComponent("bookget/bookget").path,
             FileManager.default.currentDirectoryPath + "/bin/bookget",

@@ -32,7 +32,7 @@ struct BookCoverThumbnailView: View {
         .aspectRatio(0.68, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .clipped()
-        .shadow(color: .black.opacity(showsShadow ? 0.12 : 0), radius: showsShadow ? 8 : 0, y: showsShadow ? 3 : 0)
+        .shadow(color: .black.opacity(showsShadow ? 0.10 : 0), radius: showsShadow ? 4 : 0, y: showsShadow ? 2 : 0)
         .task(id: thumbnailRequest.key) {
             await loadCover(for: thumbnailRequest)
         }
@@ -43,24 +43,27 @@ struct BookCoverThumbnailView: View {
     }
 
     private var fallbackCover: some View {
-        ZStack(alignment: .leading) {
-            LinearGradient(
-                colors: [coverTint.opacity(0.92), coverTint.opacity(0.30)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        ZStack(alignment: .trailing) {
+            MuTianTheme.paper
+            MuTianTheme.accent.opacity(0.10)
 
-            VStack(alignment: .leading, spacing: 8) {
+            Rectangle()
+                .fill(MuTianTheme.accent.opacity(0.45))
+                .frame(width: 3)
+
+            VStack(spacing: 8) {
                 Text(titleInitial)
-                    .font(.system(size: 34, weight: .semibold, design: .serif))
+                    .font(.system(size: 30, weight: .medium, design: .serif))
+                    .foregroundStyle(MuTianTheme.accent)
                 Spacer()
                 Text(book.fileType.rawValue)
-                    .font(.caption)
-                    .fontWeight(.medium)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .foregroundStyle(.white)
-            .padding(12)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .padding(.horizontal, 8)
         }
     }
 
@@ -77,17 +80,5 @@ struct BookCoverThumbnailView: View {
     private var titleInitial: String {
         let trimmed = book.title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "书" : String(trimmed.prefix(1))
-    }
-
-    private var coverTint: Color {
-        switch book.fileType {
-        case .pdf: return MuTianTheme.cinnabar
-        case .imageSequence: return MuTianTheme.jade
-        case .text: return MuTianTheme.indigo
-        case .ebook: return MuTianTheme.accent
-        case .document: return .secondary
-        case .archive: return MuTianTheme.cinnabar
-        case .mixedFolder: return MuTianTheme.accent
-        }
     }
 }

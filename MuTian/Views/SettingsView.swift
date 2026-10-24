@@ -5,42 +5,60 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("路径") {
-                LabeledContent("资料库") {
-                    Text(settingsStore.settings.databaseDirectory)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            Section {
+                pathRow("资料库", path: settingsStore.settings.databaseDirectory) { EmptyView() }
+                pathRow("默认下载目录", path: settingsStore.settings.defaultDownloadDirectory) {
+                    Button("选择…") { settingsStore.chooseDownloadDirectory() }
                 }
-                HStack {
-                    TextField("默认下载目录", text: $settingsStore.settings.defaultDownloadDirectory)
-                    Button("选择...") {
-                        settingsStore.chooseDownloadDirectory()
+                pathRow("下载引擎", path: engineDisplayPath) {
+                    if !isBuiltInEngine {
+                        Button("恢复内置") {
+                            settingsStore.settings.bookgetExecutablePath = AppPaths.defaultBookgetExecutablePath
+                        }
                     }
+                    Button("选择…") { settingsStore.chooseBookgetExecutable() }
                 }
-                HStack {
-                    TextField("bookget 可执行文件", text: $settingsStore.settings.bookgetExecutablePath)
-                    Button("选择...") {
-                        settingsStore.chooseBookgetExecutable()
-                    }
-                }
-            }
-
-            Section("bookget 默认参数") {
-                Stepper("线程：\(settingsStore.settings.defaultThreads)", value: $settingsStore.settings.defaultThreads, in: 1...64)
-                Stepper("并发：\(settingsStore.settings.defaultConcurrent)", value: $settingsStore.settings.defaultConcurrent, in: 1...128)
-                Stepper("重试：\(settingsStore.settings.defaultRetries)", value: $settingsStore.settings.defaultRetries, in: 0...20)
-                Stepper("间隔：\(settingsStore.settings.defaultSleepSeconds) 秒", value: $settingsStore.settings.defaultSleepSeconds, in: 0...120)
-            }
-
-            Section("导入策略") {
-                Text("导入时记录本地路径；bookget 下载产生的新文件默认保存到默认下载目录。")
+            } header: {
+                Text("路径")
+            } footer: {
+                Text("导入时只记录本地路径，不移动原文件；新下载的文件保存到默认下载目录。")
                     .foregroundStyle(.secondary)
+            }
+
+            Section("新任务默认参数") {
+                HStack(spacing: 24) {
+                    Stepper("线程　\(settingsStore.settings.defaultThreads)", value: $settingsStore.settings.defaultThreads, in: 1...64)
+                    Stepper("并发　\(settingsStore.settings.defaultConcurrent)", value: $settingsStore.settings.defaultConcurrent, in: 1...128)
+                }
+                HStack(spacing: 24) {
+                    Stepper("重试　\(settingsStore.settings.defaultRetries) 次", value: $settingsStore.settings.defaultRetries, in: 0...20)
+                    Stepper("间隔　\(settingsStore.settings.defaultSleepSeconds) 秒", value: $settingsStore.settings.defaultSleepSeconds, in: 0...120)
+                }
             }
         }
         .formStyle(.grouped)
-        .padding()
-        .frame(width: 620, height: 420)
+        .frame(width: 560, height: 330)
         .tint(MuTianTheme.accent)
+    }
+
+    private var isBuiltInEngine: Bool {
+        settingsStore.settings.bookgetExecutablePath == AppPaths.defaultBookgetExecutablePath
+    }
+
+    private var engineDisplayPath: String {
+        isBuiltInEngine ? "内置引擎" : settingsStore.settings.bookgetExecutablePath
+    }
+
+    private func pathRow<Actions: View>(_ title: String, path: String, @ViewBuilder actions: () -> Actions) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                Text(path.isEmpty ? "未设置" : path)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(path)
+                actions()
+            }
+        }
     }
 }

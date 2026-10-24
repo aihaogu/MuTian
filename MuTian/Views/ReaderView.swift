@@ -16,11 +16,13 @@ struct ReaderView: View {
     let presentation: ReaderPresentation
     @State private var currentPage: Int
     @State private var effectivePageCount: Int?
+    @State private var showsOutline: Bool
 
     init(book: Book, presentation: ReaderPresentation = .embedded) {
         self.book = book
         self.presentation = presentation
         _currentPage = State(initialValue: max(0, book.lastReadPage))
+        _showsOutline = State(initialValue: book.fileType == .ebook)
     }
 
     var body: some View {
@@ -37,12 +39,12 @@ struct ReaderView: View {
                 case .pdf:
                     PDFReaderView(url: URL(fileURLWithPath: book.localPath), pageIndex: $currentPage, pageCount: $effectivePageCount)
                 case .imageSequence:
-                    ImageSequenceReader(book: book, currentPage: $currentPage)
+                    ImageSequenceReader(book: book, currentPage: $currentPage, showsPageList: showsOutline)
                 case .text:
                     TextFileReader(url: URL(fileURLWithPath: book.localPath))
                 case .ebook:
                     if isEpubBook {
-                        EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount)
+                        EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount, showsChapters: showsOutline)
                     } else {
                         unsupportedReader
                     }
@@ -74,46 +76,58 @@ struct ReaderView: View {
     }
 
     private var readerToolbar: some View {
-        HStack {
+        HStack(spacing: 12) {
+            if supportsOutline {
+                Button {
+                    showsOutline.toggle()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .foregroundStyle(showsOutline ? MuTianTheme.accent : .secondary)
+                }
+                .help(showsOutline ? "隐藏\(outlineName)" : "显示\(outlineName)")
+            }
+
+            Spacer()
+
             if supportsPaging {
                 Button {
                     currentPage = max(0, min(currentPage, maxPageIndex) - 1)
                 } label: {
                     Image(systemName: "chevron.left")
                 }
-                .help("上一页")
+                .help("上一\(readerUnitName)")
                 .disabled(currentPage <= 0)
 
-                Stepper(value: clampedCurrentPage, in: 0...maxPageIndex) {
-                    Text("第 \(min(currentPage + 1, displayedPageCount)) / \(displayedPageCount) \(readerUnitName)")
-                        .frame(minWidth: 120, alignment: .leading)
-                }
-                .disabled(displayedPageCount <= 1)
+                Text("\(min(currentPage + 1, displayedPageCount)) / \(displayedPageCount) \(readerUnitName)")
+                    .font(.callout)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 90)
 
                 Button {
                     currentPage = min(maxPageIndex, currentPage + 1)
                 } label: {
                     Image(systemName: "chevron.right")
                 }
-                .help("下一页")
+                .help("下一\(readerUnitName)")
                 .disabled(currentPage >= maxPageIndex)
-            } else if book.fileType == .text || book.fileType == .document {
-                Text("连续阅读").foregroundStyle(.secondary)
             }
 
             Spacer()
 
             fullScreenButton
-
-            Text(book.localPath)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 14)
+        .frame(height: 32)
+    }
+
+    private var supportsOutline: Bool {
+        book.fileType == .imageSequence || isEpubBook
+    }
+
+    private var outlineName: String {
+        isEpubBook ? "目录" : "页码列表"
     }
 
     private var supportsPaging: Bool {
@@ -155,14 +169,6 @@ struct ReaderView: View {
             }
             .labelStyle(.iconOnly)
             .help("退出全屏")
-        }
-    }
-
-    private var clampedCurrentPage: Binding<Int> {
-        Binding {
-            min(max(currentPage, 0), maxPageIndex)
-        } set: { newValue in
-            currentPage = min(max(newValue, 0), maxPageIndex)
         }
     }
 }
@@ -326,29 +332,29 @@ struct SystemDocumentReader: NSViewRepresentable {
 struct ImageSequenceReader: View {
     let book: Book
     @Binding var currentPage: Int
+    var showsPageList: Bool = false
 
     var body: some View {
         HSplitView {
-            List(selection: $currentPage) {
-                ForEach(book.pageRecords, id: \.pageIndex) { page in
-                    HStack {
-                        Image(systemName: "doc")
-                            .foregroundStyle(.secondary)
+            if showsPageList {
+                List(selection: $currentPage) {
+                    ForEach(book.pageRecords, id: \.pageIndex) { page in
                         Text("\(page.pageIndex + 1)")
+                            .monospacedDigit()
+                            .tag(page.pageIndex)
                     }
-                    .tag(page.pageIndex)
                 }
+                .frame(minWidth: 64, idealWidth: 80, maxWidth: 120)
+                .scrollContentBackground(.hidden)
+                .background(.bar)
             }
-            .frame(minWidth: 72, idealWidth: 96, maxWidth: 130)
-            .scrollContentBackground(.hidden)
-            .background(.bar)
 
             ScrollView([.horizontal, .vertical]) {
                 if let image = currentImage {
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFit()
-                        .padding(24)
+                        .padding(16)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     DetailPlaceholder(title: "无法读取当前页", systemImage: "photo", message: "文件可能已移动，或当前页影像不可读。")
@@ -369,6 +375,7 @@ struct EpubReaderView: View {
     let book: Book
     @Binding var currentPage: Int
     @Binding var chapterCount: Int?
+    var showsChapters: Bool = true
     @State private var document: EpubDocument?
     @State private var errorMessage: String?
 
@@ -379,7 +386,9 @@ struct EpubReaderView: View {
                     DetailPlaceholder(title: "没有可读章节", systemImage: "book.closed", message: "这个 EPUB 没有找到可阅读的 HTML/XHTML 章节。")
                 } else {
                     HSplitView {
-                        chapterList(document)
+                        if showsChapters {
+                            chapterList(document)
+                        }
                         chapterContent(document)
                     }
                 }

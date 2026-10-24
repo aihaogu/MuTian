@@ -1,6 +1,6 @@
 import Foundation
 
-struct LibraryRoot: Identifiable, Codable, Hashable {
+struct LibraryRoot: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var path: String
     var createdAt: Date

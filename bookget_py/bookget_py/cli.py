@@ -9,6 +9,7 @@ from . import __version__
 from .config import Config
 from .http import build_headers, read_url_lines
 from .router import probe_url, route_and_download
+from .results import DownloadResult
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-T", "--timeout", type=int, default=300, help="网络超时秒数")
     parser.add_argument("--sleep", type=int, default=3, help="间隔睡眠秒数")
     parser.add_argument("-m", "--downloader_mode", type=int, default=0, help="0=默认, 1=通用批量, 2=IIIF manifest")
+    parser.add_argument("--result-file", default="", help="将下载结果清单写入指定 JSON 文件")
     parser.add_argument("--probe", action="store_true", help="只解析 URL 元数据，不下载")
     parser.add_argument("-V", "--version", action="store_true", help="显示版本")
     return parser
@@ -66,34 +68,37 @@ def main(argv: list[str] | None = None) -> int:
         sleep=args.sleep,
         downloader_mode=args.downloader_mode,
     )
-    config.normalize()
-    headers = build_headers(config.user_agent, config.cookies, config.headers)
-
+    result = DownloadResult()
     try:
-        if config.input_file:
-            total = 0
-            for url in read_url_lines(config.input_file):
-                total += route_and_download(url, config, headers)
-            print(f"All downloads complete. saved {total} files.")
-            return 0
-
-        if not config.input_url:
-            build_parser().print_help()
-            return 2
-
+        config.normalize()
+        headers = build_headers(config.user_agent, config.cookies, config.headers)
         if args.probe:
-            result = probe_url(config.input_url, config, headers)
-            print(json.dumps(result, ensure_ascii=False))
+            info = probe_url(config.input_url, config, headers)
+            print(json.dumps(info, ensure_ascii=False), flush=True)
             return 0
-
-        route_and_download(config.input_url, config, headers)
-        return 0
+        urls = read_url_lines(config.input_file) if config.input_file else [config.input_url]
+        if not any(urls):
+            raise ValueError("Download URL must not be empty")
+        for url in urls:
+            try:
+                result.merge(route_and_download(url, config, headers))
+            except Exception as exc:
+                result.failure(f"{url}: {exc}")
+                print(f"error: {exc}", file=sys.stderr, flush=True)
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)
         return 130
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        result.failure(str(exc))
+        print(f"error: {exc}", file=sys.stderr, flush=True)
+    if args.result_file:
+        try:
+            result.write(Path(args.result_file))
+        except Exception as exc:
+            print(f"cannot save result: {exc}", file=sys.stderr)
+            return 1
+    result.print_summary()
+    return 0 if result.succeeded else 1
 
 
 if __name__ == "__main__":

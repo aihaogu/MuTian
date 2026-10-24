@@ -1,8 +1,9 @@
 import Foundation
 
-enum DownloadStatus: String, Codable, CaseIterable, Identifiable {
+enum DownloadStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case waiting = "待开始"
     case running = "运行中"
+    case interrupted = "已中断"
     case completed = "已完成"
     case failed = "失败"
     case cancelled = "已取消"
@@ -11,7 +12,7 @@ enum DownloadStatus: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct DownloadTask: Identifiable, Codable, Hashable {
+struct DownloadTask: Identifiable, Codable, Hashable, Sendable {
     var id: UUID
     var url: String
     var outputDirectory: String
@@ -34,8 +35,9 @@ struct DownloadTask: Identifiable, Codable, Hashable {
     var importedBookID: UUID?
     var parsedTitle: String?
     var parsedVolumeCount: Int?
+    var importedBookIDs: [UUID]? = nil
 
-    static func draft(outputDirectory: String) -> DownloadTask {
+    static func draft(outputDirectory: String, threads: Int = 1, concurrent: Int = 16, retries: Int = 3, sleepSeconds: Int = 3) -> DownloadTask {
         DownloadTask(
             id: UUID(),
             url: "",
@@ -45,11 +47,11 @@ struct DownloadTask: Identifiable, Codable, Hashable {
             volumeRange: "",
             format: "full/full/0/default.jpg",
             fileExt: ".jpg",
-            threads: 1,
-            concurrent: 16,
-            retries: 3,
+            threads: threads,
+            concurrent: concurrent,
+            retries: retries,
             timeoutSeconds: 300,
-            sleepSeconds: 3,
+            sleepSeconds: sleepSeconds,
             status: .waiting,
             stdoutLog: "",
             stderrLog: "",

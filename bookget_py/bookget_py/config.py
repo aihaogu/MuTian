@@ -38,9 +38,10 @@ class Config:
 
     def normalize(self) -> None:
         self.directory = Path(self.directory).expanduser()
-        self.directory.mkdir(parents=True, exist_ok=True)
         self.seq_start, self.seq_end = parse_range(self.sequence)
         self.vol_start, self.vol_end = parse_range(self.volume)
+        if self.concurrent < 1 or self.threads < 1 or self.retries < 0 or self.timeout <= 0 or self.sleep < 0:
+            raise ValueError("Invalid concurrency, retry, timeout or sleep parameter")
         if self.ext and not self.ext.startswith("."):
             self.ext = "." + self.ext
 
@@ -59,6 +60,11 @@ def parse_range(value: str) -> tuple[Optional[int], Optional[int]]:
         return None, None
     if ":" in value:
         left, right = value.split(":", 1)
-        return int(left) if left else None, int(right) if right else None
-    number = int(value)
-    return number, number
+        start, end = int(left) if left else None, int(right) if right else None
+    else:
+        start = end = int(value)
+    if (start is not None and start < 1) or (end is not None and end < 1):
+        raise ValueError("Page and volume numbers must start at 1")
+    if start is not None and end is not None and start > end:
+        raise ValueError("Range start must not exceed range end")
+    return start, end

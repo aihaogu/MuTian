@@ -4,7 +4,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Iterable
+from .download_identity import destination_lock, verified_existing, save_verified
 
 
 def read_cookie_file(path: str) -> str:
@@ -79,16 +79,14 @@ def download_file(
     retries: int,
     min_size: int = 0,
 ) -> bool:
-    if destination.exists() and destination.stat().st_size > 0:
-        print(f"skip existing {destination}")
-        return False
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    data = get_bytes(url, headers, timeout=timeout, retries=retries, min_size=min_size)
-    temporary = destination.with_suffix(destination.suffix + ".part")
-    temporary.write_bytes(data)
-    temporary.replace(destination)
-    print(f"saved {destination}")
-    return True
+    with destination_lock(destination):
+        if verified_existing(destination, url):
+            print(f"skip verified {destination}", flush=True)
+            return False
+        data = get_bytes(url, headers, timeout=timeout, retries=retries, min_size=max(1, min_size))
+        save_verified(data, destination, url)
+        print(f"saved {destination}", flush=True)
+        return True
 
 
 def read_url_lines(path: str) -> list[str]:

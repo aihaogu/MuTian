@@ -1,14 +1,14 @@
 import Foundation
 import PDFKit
 
-struct ScanResult {
+struct ScanResult: Sendable {
     var books: [Book]
     var scannedPath: String
     var isComplete = true
 }
 
 enum FolderScanner {
-    private static let minimumImageSequencePageCount = 2
+    private static let minimumImageSequencePageCount = 1
 
     static func scan(root: URL) -> ScanResult {
         var books: [Book] = []
@@ -64,7 +64,8 @@ enum FolderScanner {
                     ocrText: "",
                     correctedText: "",
                     notes: "",
-                    status: "未校对"
+                    status: "未校对",
+                    fileIdentity: PageRecordMerger.fileIdentity(at: imageURL)
                 )
             }
             books.append(book)

@@ -24,7 +24,19 @@ enum MuTianTheme {
         case .waiting: return .secondary
         case .running: return indigo
         case .completed, .imported: return jade
-        case .failed, .cancelled: return cinnabar
+        case .failed, .cancelled, .interrupted: return cinnabar
+        }
+    }
+
+    static func fileTypeIcon(_ type: BookFileType) -> String {
+        switch type {
+        case .pdf: "doc.richtext"
+        case .imageSequence: "photo.on.rectangle"
+        case .text: "text.page"
+        case .ebook: "book"
+        case .document: "doc"
+        case .archive: "archivebox"
+        case .mixedFolder: "folder"
         }
     }
 }
@@ -48,40 +60,18 @@ extension View {
     }
 }
 
-struct MetaPill: View {
-    let text: String
-    var systemImage: String?
-    var color: Color = .secondary
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.caption2)
-            }
-            Text(text)
-                .lineLimit(1)
-        }
-        .font(.caption)
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.10))
-        .clipShape(Capsule())
-    }
-}
-
 struct StatusBadge: View {
     let text: String
     let color: Color
 
     var body: some View {
         Text(text)
-            .font(.caption)
+            .font(.caption2)
             .fontWeight(.medium)
+            .lineLimit(1)
             .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
             .background(color.opacity(0.12))
             .clipShape(Capsule())
     }
@@ -93,19 +83,20 @@ struct DetailPlaceholder: View {
     let message: String
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(MuTianTheme.accent)
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 4)
             Text(title)
-                .font(.title3)
-                .fontWeight(.semibold)
+                .font(.headline)
             Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
+                .frame(maxWidth: 360)
         }
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MuTianTheme.detailBackground)
     }

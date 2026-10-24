@@ -2,6 +2,19 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var prepareForTermination: (() -> Bool)?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard prepareForTermination?() != false else {
+            let alert = NSAlert()
+            alert.messageText = "尚有数据未能保存"
+            alert.informativeText = "请检查资料库或下载页的错误提示，修复后再退出。"
+            alert.runModal()
+            return .terminateCancel
+        }
+        return .terminateNow
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -22,6 +35,13 @@ struct MuTianApp: App {
                 .environmentObject(settingsStore)
                 .environmentObject(downloadStore)
                 .frame(minWidth: 1100, minHeight: 720)
+                .onAppear {
+                    appDelegate.prepareForTermination = {
+                        let librarySaved = libraryStore.flush()
+                        let downloadsSaved = downloadStore.shutdown()
+                        return librarySaved && downloadsSaved
+                    }
+                }
         }
         .commands {
             CommandMenu("资料库") {

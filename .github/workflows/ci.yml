@@ -1,0 +1,16 @@
+name: MuTian checks
+on: [push, pull_request]
+jobs:
+  regression:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Swift, library, reader and download checks
+        run: ./scripts/test_all.sh
+      - name: Build portable application
+        run: ./script/build_and_run.sh --build
+      - name: Verify relocated downloader without Python on PATH
+        run: ./scripts/test_bundle.sh

@@ -1,6 +1,6 @@
 import Foundation
 
-struct LibrarySnapshot: Codable {
+struct LibrarySnapshot: Codable, Sendable {
     var books: [Book]
     var roots: [LibraryRoot]
 }
@@ -24,6 +24,12 @@ enum LibraryPathRepair {
             snapshot.books[index].localPath = resolve(snapshot.books[index].localPath)
             for page in snapshot.books[index].pageRecords.indices {
                 snapshot.books[index].pageRecords[page].imagePath = resolve(snapshot.books[index].pageRecords[page].imagePath)
+            }
+        }
+        for index in snapshot.books.indices {
+            if var archived = snapshot.books[index].archivedPageRecords {
+                for page in archived.indices { archived[page].imagePath = resolve(archived[page].imagePath) }
+                snapshot.books[index].archivedPageRecords = archived
             }
         }
         for index in snapshot.roots.indices {

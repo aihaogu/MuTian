@@ -8,15 +8,17 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 from .config import Config
 from .http import get_bytes
+from .results import DownloadResult
+from .download_identity import destination_lock, verified_existing, save_verified
 
 
-def download_nlc(url: str, config: Config, headers: dict[str, str]) -> int:
+def download_nlc(url: str, config: Config, headers: dict[str, str]) -> DownloadResult:
     volume_urls = _volume_urls(url, config, headers)
     if not volume_urls:
         raise RuntimeError("未在国家图书馆页面中找到可下载的在线阅读链接。")
 
     print(f"国家图书馆：发现 {len(volume_urls)} 册")
-    completed = 0
+    result = DownloadResult()
     total = len(volume_urls)
     for index, volume_url in enumerate(volume_urls):
         if not _volume_allowed(index, config):
@@ -24,17 +26,23 @@ def download_nlc(url: str, config: Config, headers: dict[str, str]) -> int:
 
         try:
             destination = config.directory / f"{index + 1:04d}.pdf"
-            if _download_volume_pdf(volume_url, destination, config, headers):
-                completed += 1
+            with destination_lock(destination):
+                if _download_volume_pdf(volume_url, destination, config, headers):
+                    result.saved += 1
+                else:
+                    result.skipped += 1
+            result.files.append(str(destination.resolve()))
             print(f"[{index + 1}/{total}] done {volume_url}")
         except Exception as exc:
+            result.failure(f"{volume_url}: {exc}")
             print(f"[{index + 1}/{total}] failed {volume_url}: {exc}")
 
         if config.sleep > 0:
             time.sleep(config.sleep)
 
-    print(f"Download complete. saved {completed} files.")
-    return completed
+    if result.saved + result.skipped + result.failed == 0:
+        result.failure("No volumes matched the requested range.")
+    return result
 
 
 def probe_nlc(url: str, config: Config, headers: dict[str, str]) -> dict[str, object]:
@@ -89,7 +97,7 @@ def _download_volume_pdf(
     config: Config,
     headers: dict[str, str],
 ) -> bool:
-    if destination.exists() and destination.stat().st_size > 0:
+    if verified_existing(destination, volume_url):
         print(f"skip existing {destination}")
         return False
 
@@ -126,11 +134,8 @@ def _download_volume_pdf(
         preview = data[:120].decode("utf-8", errors="replace")
         raise RuntimeError(f"返回内容不是 PDF：{preview}")
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".part")
-    temporary.write_bytes(data)
-    temporary.replace(destination)
-    print(f"saved {destination}")
+    save_verified(data, destination, volume_url)
+    print(f"saved {destination}", flush=True)
     return True
 
 
