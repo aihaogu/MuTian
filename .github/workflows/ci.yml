@@ -3,8 +3,14 @@ on: [push, pull_request]
 jobs:
   regression:
     runs-on: macos-14
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Swift toolchain
+        run: |
+          xcodebuild -version
+          swift --version
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
