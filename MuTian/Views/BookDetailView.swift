@@ -69,6 +69,11 @@ private struct BookHeaderView: View {
             .labelsHidden()
             .fixedSize()
 
+            OpenReaderWindowButton(book: book)
+                .labelStyle(.titleAndIcon)
+                .controlSize(.regular)
+                .disabled(!FileManager.default.fileExists(atPath: book.localPath))
+
             HStack(spacing: 2) {
                 Button {
                     libraryStore.toggleFavorite(book)

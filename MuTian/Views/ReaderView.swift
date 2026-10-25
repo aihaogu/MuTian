@@ -6,7 +6,7 @@ import Quartz
 
 enum ReaderPresentation {
     case embedded
-    case fullScreenWindow
+    case window
 }
 
 struct ReaderView: View {
@@ -17,6 +17,15 @@ struct ReaderView: View {
     @State private var currentPage: Int
     @State private var effectivePageCount: Int?
     @State private var showsOutline: Bool
+    @State private var hasPDFOutline = false
+    @State private var effectiveScale = 1.0
+    @AppStorage("reader.layout") private var pageLayout: ReaderPageLayout = .single
+    @AppStorage("reader.continuous") private var continuousScroll = true
+    @AppStorage("reader.rightToLeft") private var rightToLeft = false
+    @AppStorage("reader.coverAlone") private var coverAlone = true
+    @AppStorage("reader.zoomMode") private var zoomMode: ReaderZoomMode = .fitPage
+    @AppStorage("reader.zoomScale") private var zoomScale = 1.0
+    @AppStorage("reader.textScale") private var textScale = 1.0
 
     init(book: Book, presentation: ReaderPresentation = .embedded) {
         self.book = book
@@ -37,14 +46,15 @@ struct ReaderView: View {
             } else {
                 switch book.fileType {
                 case .pdf:
-                    PDFReaderView(url: URL(fileURLWithPath: book.localPath), pageIndex: $currentPage, pageCount: $effectivePageCount)
+                    pagedReader(source: .pdf(URL(fileURLWithPath: book.localPath)))
                 case .imageSequence:
-                    ImageSequenceReader(book: book, currentPage: $currentPage, showsPageList: showsOutline)
+                    pagedReader(source: .images(book.pageRecords))
                 case .text:
-                    TextFileReader(url: URL(fileURLWithPath: book.localPath))
+                    TextFileReader(url: URL(fileURLWithPath: book.localPath), textScale: textScale)
                 case .ebook:
                     if isEpubBook {
-                        EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount, showsChapters: showsOutline)
+                        EpubReaderView(book: book, currentPage: $currentPage, chapterCount: $effectivePageCount,
+                                       showsChapters: showsOutline, textScale: textScale)
                     } else {
                         unsupportedReader
                     }
@@ -66,6 +76,37 @@ struct ReaderView: View {
         .onChange(of: book.lastReadPage) { _, newValue in
             if currentPage != newValue { currentPage = max(0, newValue) }
         }
+        .onChange(of: hasPDFOutline) { _, hasOutline in
+            if hasOutline { showsOutline = true }
+        }
+    }
+
+    private func pagedReader(source: PagedReaderSource) -> some View {
+        PagedReaderView(
+            source: source,
+            pageIndex: $currentPage,
+            pageCount: $effectivePageCount,
+            showsSidebar: showsOutline,
+            hasOutline: $hasPDFOutline,
+            options: displayOptions,
+            onZoomChange: setZoom,
+            effectiveScale: $effectiveScale
+        )
+    }
+
+    private var displayOptions: ReaderDisplayOptions {
+        ReaderDisplayOptions(
+            layout: pageLayout,
+            continuous: continuousScroll,
+            rightToLeft: rightToLeft,
+            coverAlone: coverAlone,
+            zoom: ReaderZoom(mode: zoomMode, scale: zoomScale)
+        )
+    }
+
+    private func setZoom(_ zoom: ReaderZoom) {
+        if zoomMode != zoom.mode { zoomMode = zoom.mode }
+        if zoomScale != zoom.scale { zoomScale = zoom.scale }
     }
 
     private var unsupportedReader: some View {
@@ -76,12 +117,22 @@ struct ReaderView: View {
     }
 
     private var readerToolbar: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            toolbarRow(compact: false)
+            toolbarRow(compact: true)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 14)
+        .frame(height: 32)
+    }
+
+    private func toolbarRow(compact: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 12) {
             if supportsOutline {
                 Button {
                     showsOutline.toggle()
                 } label: {
-                    Image(systemName: "sidebar.left")
+                    Image(systemName: book.fileType == .imageSequence ? "sidebar.left" : "list.bullet.indent")
                         .foregroundStyle(showsOutline ? MuTianTheme.accent : .secondary)
                 }
                 .help(showsOutline ? "隐藏\(outlineName)" : "显示\(outlineName)")
@@ -102,7 +153,7 @@ struct ReaderView: View {
                     .font(.callout)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 90)
+                    .frame(minWidth: compact ? 64 : 90)
 
                 Button {
                     currentPage = min(maxPageIndex, currentPage + 1)
@@ -115,19 +166,145 @@ struct ReaderView: View {
 
             Spacer()
 
-            fullScreenButton
+            if supportsZoom {
+                zoomControls(compact: compact)
+            }
+            if isPagedBook {
+                pageLayoutPicker
+                layoutMenu
+            }
+            windowButton
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 14)
-        .frame(height: 32)
+    }
+
+    // MARK: - Zoom & layout
+
+    private var isPagedBook: Bool {
+        book.fileType == .pdf || book.fileType == .imageSequence
+    }
+
+    private var supportsZoom: Bool {
+        isPagedBook || isEpubBook || book.fileType == .text
+    }
+
+    private var displayedScale: Double {
+        isPagedBook ? effectiveScale : textScale
+    }
+
+    @ViewBuilder
+    private func zoomControls(compact: Bool) -> some View {
+        HStack(spacing: 4) {
+            if !compact {
+                Button(action: zoomOut) { Image(systemName: "minus.magnifyingglass") }
+                    .help("缩小")
+                    .keyboardShortcut("-", modifiers: .command)
+            }
+            Menu {
+                if isPagedBook {
+                    zoomModeButton("适应窗口", mode: .fitPage)
+                        .keyboardShortcut("9", modifiers: .command)
+                    zoomModeButton("适应宽度", mode: .fitWidth)
+                    Divider()
+                }
+                Button("实际大小") { setScale(1) }
+                    .keyboardShortcut("0", modifiers: .command)
+                Divider()
+                ForEach(ReaderZoom.presets, id: \.self) { preset in
+                    Button("\(Int((preset * 100).rounded()))%") { setScale(preset) }
+                }
+            } label: {
+                Text("\(Int((displayedScale * 100).rounded()))%")
+                    .monospacedDigit()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(zoomHelp)
+            if !compact {
+                Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
+                    .help("放大")
+                    .keyboardShortcut("=", modifiers: .command)
+            }
+        }
+    }
+
+    private func zoomModeButton(_ title: String, mode: ReaderZoomMode) -> some View {
+        Button {
+            zoomMode = mode
+        } label: {
+            if zoomMode == mode {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    private var zoomHelp: String {
+        guard isPagedBook else { return "文字缩放" }
+        switch zoomMode {
+        case .fitPage: return "缩放：适应窗口"
+        case .fitWidth: return "缩放：适应宽度"
+        case .custom: return "缩放"
+        }
+    }
+
+    private func zoomIn() { setScale(displayedScale * (isPagedBook ? 1.25 : 1.1)) }
+
+    private func zoomOut() { setScale(displayedScale / (isPagedBook ? 1.25 : 1.1)) }
+
+    private func setScale(_ scale: Double) {
+        if isPagedBook {
+            zoomScale = ReaderZoom.clamped(scale)
+            zoomMode = .custom
+        } else {
+            textScale = min(max(scale, 0.5), 3)
+        }
+    }
+
+    private var pageLayoutPicker: some View {
+        Picker("页面", selection: $pageLayout) {
+            ForEach(ReaderPageLayout.allCases) { layout in
+                Image(systemName: layout.systemImage)
+                    .help(layout.title)
+                    .tag(layout)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+        .help("单页 / 双页并排")
+    }
+
+    private var layoutMenu: some View {
+        Menu {
+            Picker("翻页", selection: $continuousScroll) {
+                Text("连续滚动").tag(true)
+                Text("分页").tag(false)
+            }
+            .pickerStyle(.inline)
+
+            Divider()
+
+            Toggle("从右向左排列", isOn: $rightToLeft)
+            Toggle("封面单独显示", isOn: $coverAlone)
+                .disabled(pageLayout != .twoUp)
+        } label: {
+            Image(systemName: continuousScroll ? "scroll" : "book.pages")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("翻页方式：\(continuousScroll ? "连续滚动" : "分页")")
     }
 
     private var supportsOutline: Bool {
-        book.fileType == .imageSequence || isEpubBook
+        book.fileType == .imageSequence || isEpubBook || (book.fileType == .pdf && hasPDFOutline)
     }
 
     private var outlineName: String {
-        isEpubBook ? "目录" : "页码列表"
+        book.fileType == .imageSequence ? "页码列表" : "目录"
     }
 
     private var supportsPaging: Bool {
@@ -151,75 +328,29 @@ struct ReaderView: View {
     }
 
     @ViewBuilder
-    private var fullScreenButton: some View {
+    private var windowButton: some View {
         switch presentation {
         case .embedded:
             Button {
                 openWindow(value: book.id)
             } label: {
-                Label("全屏阅读", systemImage: "arrow.up.left.and.arrow.down.right")
+                Image(systemName: "macwindow.badge.plus")
             }
-            .labelStyle(.iconOnly)
-            .help("全屏阅读")
-        case .fullScreenWindow:
+            .help("在新窗口中阅读")
+        case .window:
             Button {
                 NSApp.keyWindow?.toggleFullScreen(nil)
             } label: {
-                Label("退出全屏", systemImage: "arrow.down.right.and.arrow.up.left")
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
             }
-            .labelStyle(.iconOnly)
-            .help("退出全屏")
-        }
-    }
-}
-
-private struct LoadedPDF: @unchecked Sendable {
-    // Transfer ownership to the main actor after background loading completes.
-    let document: PDFDocument?
-}
-
-struct PDFReaderView: View {
-    let url: URL
-    @Binding var pageIndex: Int
-    @Binding var pageCount: Int?
-    @State private var document: PDFDocument?
-    @State private var errorMessage: String?
-
-    var body: some View {
-        Group {
-            if let document {
-                PDFReaderRepresentable(document: document, pageIndex: $pageIndex)
-            } else if let errorMessage {
-                DetailPlaceholder(title: "无法打开 PDF", systemImage: "doc.richtext", message: errorMessage)
-            } else {
-                ProgressView("正在打开 PDF…")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MuTianTheme.paper)
-        .task(id: url) {
-            document = nil
-            errorMessage = nil
-            let source = url
-            let result = await Task.detached(priority: .userInitiated) {
-                LoadedPDF(document: PDFDocument(url: source))
-            }.value
-            guard !Task.isCancelled else { return }
-            if let loaded = result.document, !loaded.isLocked, loaded.pageCount > 0 {
-                pageCount = loaded.pageCount
-                pageIndex = min(max(pageIndex, 0), loaded.pageCount - 1)
-                document = loaded
-            } else {
-                errorMessage = result.document?.isLocked == true
-                    ? "此 PDF 已加密，请先用“预览”解锁后再导入。"
-                    : "无法解析这个 PDF。请检查文件是否完整、是否具有读取权限，或用“预览”检查原文件。"
-            }
+            .help("进入或退出全屏")
         }
     }
 }
 
 struct TextFileReader: View {
     let url: URL
+    var textScale: Double = 1
     @State private var text: String?
     @State private var errorMessage: String?
 
@@ -228,7 +359,7 @@ struct TextFileReader: View {
             if let text {
                 ScrollView {
                     Text(text)
-                        .font(.system(.body, design: .serif))
+                        .font(.system(size: NSFont.systemFontSize * 1.1 * textScale, design: .serif))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(24)
@@ -258,61 +389,6 @@ struct TextFileReader: View {
     }
 }
 
-struct PDFReaderRepresentable: NSViewRepresentable {
-    let document: PDFDocument
-    @Binding var pageIndex: Int
-
-    func makeCoordinator() -> Coordinator { Coordinator(pageIndex: $pageIndex) }
-
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.pageChanged(_:)), name: .PDFViewPageChanged, object: view)
-        return view
-    }
-
-    func updateNSView(_ view: PDFView, context: Context) {
-        let coordinator = context.coordinator
-        coordinator.pageIndex = $pageIndex
-        coordinator.isUpdating = true
-        defer { coordinator.isUpdating = false }
-        let changedDocument = view.document !== document
-        if changedDocument { view.document = document }
-        let requested = min(max(0, pageIndex), max(0, document.pageCount - 1))
-        guard changedDocument || coordinator.requestedPage != requested else { return }
-        coordinator.requestedPage = requested
-        if let page = document.page(at: requested), view.currentPage !== page {
-            view.go(to: page)
-        }
-    }
-
-    static func dismantleNSView(_ view: PDFView, coordinator: Coordinator) {
-        NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var pageIndex: Binding<Int>
-        var requestedPage: Int?
-        var isUpdating = false
-
-        init(pageIndex: Binding<Int>) { self.pageIndex = pageIndex }
-
-        @objc func pageChanged(_ notification: Notification) {
-            guard !isUpdating, let view = notification.object as? PDFView else { return }
-            Task { @MainActor [weak self, weak view] in
-                guard let self, let view, let page = view.currentPage, let document = view.document else { return }
-                let index = document.index(for: page)
-                guard index != NSNotFound else { return }
-                self.requestedPage = index
-                if self.pageIndex.wrappedValue != index { self.pageIndex.wrappedValue = index }
-            }
-        }
-    }
-}
-
 struct SystemDocumentReader: NSViewRepresentable {
     let url: URL
 
@@ -329,56 +405,16 @@ struct SystemDocumentReader: NSViewRepresentable {
     }
 }
 
-struct ImageSequenceReader: View {
-    let book: Book
-    @Binding var currentPage: Int
-    var showsPageList: Bool = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if showsPageList {
-                List(selection: $currentPage) {
-                    ForEach(book.pageRecords, id: \.pageIndex) { page in
-                        Text("\(page.pageIndex + 1)")
-                            .monospacedDigit()
-                            .tag(page.pageIndex)
-                    }
-                }
-                .frame(width: 76)
-                .scrollContentBackground(.hidden)
-                .background(.bar)
-                Divider()
-            }
-
-            ScrollView([.horizontal, .vertical]) {
-                if let image = currentImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(16)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    DetailPlaceholder(title: "无法读取当前页", systemImage: "photo", message: "文件可能已移动，或当前页影像不可读。")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .background(MuTianTheme.paper)
-        }
-    }
-
-    private var currentImage: NSImage? {
-        guard let page = book.pageRecords.first(where: { $0.pageIndex == currentPage }) else { return nil }
-        return NSImage(contentsOfFile: page.imagePath)
-    }
-}
-
 struct EpubReaderView: View {
     let book: Book
     @Binding var currentPage: Int
     @Binding var chapterCount: Int?
     var showsChapters: Bool = true
+    var textScale: Double = 1
     @State private var document: EpubDocument?
     @State private var errorMessage: String?
+    @State private var anchor: EpubAnchor?
+    @State private var selectedEntryID: String?
 
     var body: some View {
         Group {
@@ -410,25 +446,50 @@ struct EpubReaderView: View {
         .task(id: book.localPath) {
             await loadDocument()
         }
+        .onChange(of: currentPage) { _, newValue in
+            if anchor?.chapter != newValue { anchor = nil }
+        }
     }
 
+    @ViewBuilder
     private func chapterList(_ document: EpubDocument) -> some View {
-        List(selection: clampedChapterSelection(for: document)) {
-            ForEach(document.chapters) { chapter in
-                Text(chapter.title)
-                    .lineLimit(2)
-                    .tag(chapter.id)
+        if document.tableOfContents.isEmpty {
+            List(selection: clampedChapterSelection(for: document)) {
+                ForEach(document.chapters) { chapter in
+                    Text(chapter.title)
+                        .lineLimit(2)
+                        .tag(chapter.id)
+                }
+            }
+            .frame(width: 220)
+            .scrollContentBackground(.hidden)
+            .background(.bar)
+        } else {
+            ReaderOutlineSidebar(
+                entries: document.tableOfContents,
+                currentID: currentEntryID(in: document.tableOfContents),
+                showsTargetNumbers: false
+            ) { entry in
+                selectedEntryID = entry.id
+                anchor = EpubAnchor(chapter: entry.target, fragment: entry.fragment)
+                currentPage = min(max(entry.target, 0), max(0, document.chapters.count - 1))
             }
         }
-        .frame(width: 200)
-        .scrollContentBackground(.hidden)
-        .background(.bar)
+    }
+
+    private func currentEntryID(in entries: [ReaderOutlineEntry]) -> String? {
+        let flat = entries.flattened
+        if let selectedEntryID, flat.first(where: { $0.id == selectedEntryID })?.target == currentPage {
+            return selectedEntryID
+        }
+        return flat.first { $0.target == currentPage }?.id ?? entries.entry(atOrBefore: currentPage)?.id
     }
 
     @ViewBuilder
     private func chapterContent(_ document: EpubDocument) -> some View {
         if let chapter = selectedChapter(in: document) {
-            EpubWebView(url: chapter.url, readAccessURL: document.rootDirectory)
+            EpubWebView(url: chapter.url, readAccessURL: document.rootDirectory,
+                        anchor: anchor?.chapter == chapter.id ? anchor : nil, pageZoom: textScale)
                 .background(MuTianTheme.paper)
         } else {
             DetailPlaceholder(title: "请选择章节", systemImage: "list.bullet", message: "从左侧目录选择要阅读的章节。")
@@ -471,9 +532,18 @@ struct EpubReaderView: View {
     }
 }
 
+/// A table-of-contents jump inside an EPUB chapter; a new token re-scrolls even to the same anchor.
+struct EpubAnchor: Equatable {
+    let chapter: Int
+    let fragment: String?
+    var token = UUID()
+}
+
 struct EpubWebView: NSViewRepresentable {
     let url: URL
     let readAccessURL: URL
+    var anchor: EpubAnchor?
+    var pageZoom: Double = 1
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -486,16 +556,62 @@ struct EpubWebView: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsMagnification = true
         view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = context.coordinator
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        guard context.coordinator.loadedURL != url else { return }
-        context.coordinator.loadedURL = url
-        view.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+        let coordinator = context.coordinator
+        if abs(view.pageZoom - pageZoom) > 0.001 { view.pageZoom = pageZoom }
+        if coordinator.loadedURL != url {
+            coordinator.loadedURL = url
+            coordinator.pendingAnchor = anchor
+            coordinator.appliedToken = anchor?.token
+            view.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+        } else if let anchor, coordinator.appliedToken != anchor.token {
+            coordinator.appliedToken = anchor.token
+            if coordinator.isLoading {
+                coordinator.pendingAnchor = anchor
+            } else {
+                Coordinator.scroll(view, to: anchor)
+            }
+        }
     }
 
-    final class Coordinator {
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedURL: URL?
+        var pendingAnchor: EpubAnchor?
+        var appliedToken: UUID?
+        var isLoading = false
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            isLoading = true
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            isLoading = false
+            if let anchor = pendingAnchor {
+                pendingAnchor = nil
+                Self.scroll(webView, to: anchor)
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            isLoading = false
+        }
+
+        static func scroll(_ webView: WKWebView, to anchor: EpubAnchor) {
+            guard let fragment = anchor.fragment,
+                  let data = try? JSONEncoder().encode(fragment),
+                  let literal = String(data: data, encoding: .utf8) else {
+                webView.evaluateJavaScript("window.scrollTo(0, 0)")
+                return
+            }
+            webView.evaluateJavaScript("""
+            (function(){var id=\(literal);var el=document.getElementById(id)||document.getElementsByName(id)[0];
+            if(el){el.scrollIntoView({block:'start'});}else{window.scrollTo(0,0);}})()
+            """)
+        }
     }
 }

@@ -263,6 +263,8 @@ private struct BookActions: View {
     let book: Book
 
     var body: some View {
+        OpenReaderWindowButton(book: book, title: "在新窗口中阅读")
+        Divider()
         Button(book.isFavorite ? "取消收藏" : "收藏") {
             libraryStore.toggleFavorite(book)
         }

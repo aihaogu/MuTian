@@ -70,12 +70,11 @@ struct MuTianApp: App {
         }
         .defaultSize(width: 680, height: 460)
 
-        WindowGroup("全屏阅读", for: UUID.self) { $bookID in
-            FullScreenReaderWindow(bookID: bookID)
+        WindowGroup("阅读", for: UUID.self) { $bookID in
+            ReaderWindow(bookID: bookID)
                 .environmentObject(libraryStore)
-                .frame(minWidth: 900, minHeight: 680)
         }
-        .defaultSize(width: 1280, height: 860)
+        .defaultSize(width: 1100, height: 820)
 
         Settings {
             SettingsView()
