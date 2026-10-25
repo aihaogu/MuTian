@@ -45,6 +45,9 @@ struct SidebarView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             SidebarStatusStrip()
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            SidebarFoldersFooter()
+        }
         .onAppear(perform: expandSelectedSection)
         .onChange(of: libraryStore.sidebarSelection) { _, _ in
             expandSelectedSection()
@@ -75,38 +78,101 @@ private struct SidebarStatusStrip: View {
             || libraryStore.saveError != nil
             || !libraryStore.lastImportMessage.isEmpty
 
-        if hasContent {
-            VStack(alignment: .leading, spacing: 6) {
-                if let error = libraryStore.saveError {
-                    Text(error)
-                        .foregroundStyle(MuTianTheme.cinnabar)
-                        .lineLimit(3)
-                    Button("重试保存") { libraryStore.flush() }
-                        .controlSize(.small)
-                }
-                if libraryStore.loadError != nil {
-                    Button("从备份恢复资料库…") { libraryStore.presentRecoveryPanel() }
-                        .controlSize(.small)
-                }
-                if libraryStore.isScanning || !libraryStore.lastImportMessage.isEmpty {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        if libraryStore.isScanning {
-                            ProgressView()
-                                .controlSize(.mini)
+        VStack(spacing: 0) {
+            if hasContent {
+                strip
+            }
+        }
+        .task(id: dismissKey) { await autoDismiss() }
+    }
+
+    private var strip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let error = libraryStore.saveError {
+                Text(error)
+                    .foregroundStyle(MuTianTheme.cinnabar)
+                    .lineLimit(3)
+                Button("重试保存") { libraryStore.flush() }
+                    .controlSize(.small)
+            }
+            if libraryStore.loadError != nil {
+                Button("从备份恢复资料库…") { libraryStore.presentRecoveryPanel() }
+                    .controlSize(.small)
+            }
+            if libraryStore.isScanning || !libraryStore.lastImportMessage.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if libraryStore.isScanning {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Text(libraryStore.lastImportMessage)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(libraryStore.lastImportMessage)
+                    Spacer(minLength: 0)
+                    if !libraryStore.isScanning {
+                        Button {
+                            libraryStore.lastImportMessage = ""
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption2.weight(.semibold))
                         }
-                        Text(libraryStore.lastImportMessage)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .help(libraryStore.lastImportMessage)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.tertiary)
+                        .help("关闭提示")
                     }
                 }
             }
-            .font(.caption)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .overlay(alignment: .bottom) { Divider() }
         }
+        .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) { Divider() }
+        .transition(.opacity)
+    }
+
+    private var dismissKey: String {
+        "\(libraryStore.isScanning)|\(libraryStore.lastImportMessage)"
+    }
+
+    private func autoDismiss() async {
+        let message = libraryStore.lastImportMessage
+        guard !libraryStore.isScanning, !message.isEmpty else { return }
+        let isWarning = ["失败", "无法", "不可用"].contains { message.contains($0) }
+        try? await Task.sleep(for: .seconds(isWarning ? 12 : 5))
+        guard !Task.isCancelled, !libraryStore.isScanning, libraryStore.lastImportMessage == message else { return }
+        withAnimation(.easeOut(duration: 0.25)) {
+            libraryStore.lastImportMessage = ""
+        }
+    }
+}
+
+private struct SidebarFoldersFooter: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button {
+            openWindow(id: LibraryFoldersWindow.id)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "folder.badge.gearshape")
+                    .foregroundStyle(.secondary)
+                Text("资料库文件夹")
+                Spacer(minLength: 4)
+                Text("\(libraryStore.roots.count)")
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.callout)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("查看资料库来自哪些文件夹，添加或移除位置（⇧⌘L）")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) { Divider() }
     }
 }
 

@@ -202,6 +202,49 @@ final class LibraryStore: ObservableObject {
         await importURLs(urls)
     }
 
+    func rescan(_ root: LibraryRoot) async {
+        await importURLs([URL(fileURLWithPath: root.path)])
+    }
+
+    func bookCount(in root: LibraryRoot) -> Int {
+        books.filter { isPath($0.localPath, insideOrEqualTo: root.path) }.count
+    }
+
+    /// Books that would leave the library if these roots were removed; books still covered by another root stay.
+    func booksRemoved(withRoots ids: Set<UUID>) -> [Book] {
+        let remaining = roots.filter { !ids.contains($0.id) }
+        let removedRoots = roots.filter { ids.contains($0.id) }
+        return books.filter { book in
+            removedRoots.contains { isPath(book.localPath, insideOrEqualTo: $0.path) }
+                && !remaining.contains { isPath(book.localPath, insideOrEqualTo: $0.path) }
+        }
+    }
+
+    /// Removes roots and their books from the index only; files on disk are never touched.
+    @discardableResult
+    func removeRoots(_ ids: Set<UUID>) -> Bool {
+        guard loadError == nil, !isScanning, !ids.isEmpty, flush() else { return false }
+        let removedBookIDs = Set(booksRemoved(withRoots: ids).map(\.id))
+        if FileManager.default.fileExists(atPath: libraryFile.path) {
+            do {
+                let backup = libraryFile.deletingLastPathComponent().appendingPathComponent("library-before-folder-removal-\(UUID().uuidString).json")
+                try FileManager.default.copyItem(at: libraryFile, to: backup)
+            } catch {
+                lastImportMessage = "无法备份资料库，未移除文件夹：\(error.localizedDescription)"
+                return false
+            }
+        }
+        let removedCount = roots.filter { ids.contains($0.id) }.count
+        isLoading = true
+        roots.removeAll { ids.contains($0.id) }
+        books.removeAll { removedBookIDs.contains($0.id) }
+        isLoading = false
+        save()
+        syncSelectionWithFilter()
+        lastImportMessage = "已移除 \(removedCount) 个文件夹，资料库减少 \(removedBookIDs.count) 部；磁盘上的文件未改动。"
+        return true
+    }
+
     func update(_ book: Book) {
         guard loadError == nil, let index = books.firstIndex(where: { $0.id == book.id }) else { return }
         var updated = book

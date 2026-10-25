@@ -50,14 +50,25 @@ struct MuTianApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command])
 
-                Button("刷新索引") {
+                Button("重新扫描全部") {
                     Task {
                         await libraryStore.rescanKnownRoots()
                     }
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+
+                Divider()
+
+                OpenLibraryFoldersButton()
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
             }
         }
+
+        Window("资料库文件夹", id: LibraryFoldersWindow.id) {
+            LibraryFoldersView()
+                .environmentObject(libraryStore)
+        }
+        .defaultSize(width: 680, height: 460)
 
         WindowGroup("全屏阅读", for: UUID.self) { $bookID in
             FullScreenReaderWindow(bookID: bookID)
@@ -69,6 +80,7 @@ struct MuTianApp: App {
         Settings {
             SettingsView()
                 .environmentObject(settingsStore)
+                .environmentObject(libraryStore)
         }
     }
 }

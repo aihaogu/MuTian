@@ -2,11 +2,19 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var settingsStore: SettingsStore
+    @EnvironmentObject private var libraryStore: LibraryStore
 
     var body: some View {
         Form {
             Section {
                 pathRow("资料库", path: settingsStore.settings.databaseDirectory) { EmptyView() }
+                LabeledContent("资料库文件夹") {
+                    HStack(spacing: 8) {
+                        Text("\(libraryStore.roots.count) 个位置")
+                            .foregroundStyle(.secondary)
+                        OpenLibraryFoldersButton(title: "管理…")
+                    }
+                }
                 pathRow("默认下载目录", path: settingsStore.settings.defaultDownloadDirectory) {
                     Button("选择…") { settingsStore.chooseDownloadDirectory() }
                 }
@@ -37,7 +45,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 330)
+        .frame(width: 560, height: 370)
         .tint(MuTianTheme.accent)
     }
 

@@ -51,18 +51,7 @@ struct LibraryListView: View {
         .background(MuTianTheme.detailBackground)
         .navigationTitle(selectionTitle)
         .navigationSubtitle("\(books.count) 部")
-        .toolbar {
-            ToolbarItemGroup {
-                filterMenu
-                Picker("显示方式", selection: $browseModeRaw) {
-                    Label("封面", systemImage: "square.grid.2x2").tag(LibraryBrowseMode.covers.rawValue)
-                    Label("列表", systemImage: "list.bullet").tag(LibraryBrowseMode.list.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .labelStyle(.iconOnly)
-                .help("切换封面或列表")
-            }
-        }
+        .modifier(LibraryToolbar(browseModeRaw: $browseModeRaw, filterMenu: filterMenu))
         .onChange(of: libraryStore.searchText) { _, _ in
             resetPagination()
         }
@@ -209,6 +198,63 @@ struct LibraryListView: View {
     private func loadMore(total: Int) {
         guard visibleBookLimit < total else { return }
         visibleBookLimit = min(visibleBookLimit + pageSize, total)
+    }
+}
+
+private struct LibraryToolbar<FilterMenu: View>: ViewModifier {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @Binding var browseModeRaw: String
+    let filterMenu: FilterMenu
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.toolbar {
+                ToolbarItemGroup { viewControls }
+                ToolbarSpacer(.fixed)
+                ToolbarItem { importButton }
+                ToolbarSpacer(.fixed)
+                ToolbarItem { rescanButton }
+            }
+        } else {
+            content.toolbar {
+                ToolbarItemGroup { viewControls }
+                ToolbarItem { importButton }
+                ToolbarItem { rescanButton }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var viewControls: some View {
+        filterMenu
+        Picker("显示方式", selection: $browseModeRaw) {
+            Label("封面", systemImage: "square.grid.2x2").tag(LibraryBrowseMode.covers.rawValue)
+            Label("列表", systemImage: "list.bullet").tag(LibraryBrowseMode.list.rawValue)
+        }
+        .pickerStyle(.segmented)
+        .labelStyle(.iconOnly)
+        .help("切换封面或列表")
+    }
+
+    private var importButton: some View {
+        Button {
+            libraryStore.presentImportPanel()
+        } label: {
+            Label("导入", systemImage: "square.and.arrow.down")
+                .labelStyle(.titleAndIcon)
+        }
+        .help("选择本地古籍文件夹或 PDF 加入资料库")
+    }
+
+    private var rescanButton: some View {
+        Button {
+            Task { await libraryStore.rescanKnownRoots() }
+        } label: {
+            Label(libraryStore.isScanning ? "扫描中…" : "重新扫描", systemImage: "arrow.clockwise")
+                .labelStyle(.titleAndIcon)
+        }
+        .help("重新扫描已导入的目录，更新新增、改动和失效的书目")
+        .disabled(libraryStore.roots.isEmpty || libraryStore.isScanning)
     }
 }
 

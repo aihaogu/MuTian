@@ -28,8 +28,43 @@ struct StoreRegressionChecks {
         try await testRecovery(base)
         try await testPages(base)
         try await testQueueAndDownloads(base)
+        try await testRootRemoval(base)
         try testWriter(base)
-        print("PASS: library protection/recovery, page identity/archive, queued imports, download states/defaults/logs, persistence flush")
+        print("PASS: library protection/recovery, page identity/archive, queued imports, download states/defaults/logs, folder removal, persistence flush")
+    }
+
+    @MainActor
+    static func testRootRemoval(_ base: URL) async throws {
+        let fm = FileManager.default
+        let outer = base.appendingPathComponent("roots-outer")
+        let inner = outer.appendingPathComponent("inner")
+        let other = base.appendingPathComponent("roots-other")
+        for directory in [inner, other] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
+        let outerFile = outer.appendingPathComponent("outer.txt")
+        let innerFile = inner.appendingPathComponent("inner.txt")
+        let otherFile = other.appendingPathComponent("other.txt")
+        for file in [outerFile, innerFile, otherFile] { try Data(file.lastPathComponent.utf8).write(to: file) }
+
+        let file = base.appendingPathComponent("roots-library.json")
+        let store = LibraryStore(libraryFile: file)
+        await store.importURLs([outer, inner, other])
+        try require(store.roots.count == 3 && store.books.count == 3, "Root fixture import failed")
+        let outerRoot = store.roots.first { $0.path == outer.path }!
+        let innerRoot = store.roots.first { $0.path == inner.path }!
+        try require(store.bookCount(in: outerRoot) == 2, "Root book count must include nested files")
+
+        try require(store.removeRoots([outerRoot.id]), "Removing a root failed")
+        try require(store.roots.count == 2 && Set(store.books.map(\.localPath)) == [innerFile.path, otherFile.path],
+            "Removing a root must keep books still covered by another root")
+        try require(fm.fileExists(atPath: outerFile.path), "Removing a root must not touch files on disk")
+        let backups = try fmContents(base).filter { $0.lastPathComponent.hasPrefix("library-before-folder-removal-") }
+        try require(backups.count == 1, "Root removal must back up the index")
+
+        try require(store.removeRoots([innerRoot.id]), "Removing the nested root failed")
+        try require(store.books.map(\.localPath) == [otherFile.path], "Nested root books were not removed")
+        try require(store.flush(), "Root removal not flushed")
+        let reloaded = LibraryStore(libraryFile: file)
+        try require(reloaded.roots.map(\.path) == [other.path] && reloaded.books.count == 1, "Root removal did not survive restart")
     }
 
     @MainActor

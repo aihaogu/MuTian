@@ -29,12 +29,48 @@ struct BookCoverThumbnailRequest: Hashable, Sendable {
         key = "\(book.fileType.rawValue)|\(sourcePath ?? "")|\(signature)"
     }
 
+    static func displayKey(for book: Book) -> String {
+        "\(book.fileType.rawValue)|\(book.localPath)|\(book.pageRecords.first?.imagePath ?? "")"
+    }
+
     private static func fileSignature(for path: String?) -> String {
         guard let path, !path.isEmpty else { return "missing" }
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         return "\(Int(modified))-\(size)"
+    }
+}
+
+/// Decoded covers kept on the main actor so recreated grid cells can draw them in the same frame.
+@MainActor
+enum BookCoverImageStore {
+    final class Entry {
+        let image: NSImage
+        let sourceKey: String
+
+        init(image: NSImage, sourceKey: String) {
+            self.image = image
+            self.sourceKey = sourceKey
+        }
+    }
+
+    private static let cache: NSCache<NSString, Entry> = {
+        let cache = NSCache<NSString, Entry>()
+        cache.countLimit = 240
+        return cache
+    }()
+
+    static func entry(for displayKey: String) -> Entry? {
+        cache.object(forKey: displayKey as NSString)
+    }
+
+    static func store(_ entry: Entry, for displayKey: String) {
+        cache.setObject(entry, forKey: displayKey as NSString)
+    }
+
+    static func remove(_ displayKey: String) {
+        cache.removeObject(forKey: displayKey as NSString)
     }
 }
 

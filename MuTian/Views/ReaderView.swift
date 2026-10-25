@@ -335,7 +335,7 @@ struct ImageSequenceReader: View {
     var showsPageList: Bool = false
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             if showsPageList {
                 List(selection: $currentPage) {
                     ForEach(book.pageRecords, id: \.pageIndex) { page in
@@ -344,9 +344,10 @@ struct ImageSequenceReader: View {
                             .tag(page.pageIndex)
                     }
                 }
-                .frame(minWidth: 64, idealWidth: 80, maxWidth: 120)
+                .frame(width: 76)
                 .scrollContentBackground(.hidden)
                 .background(.bar)
+                Divider()
             }
 
             ScrollView([.horizontal, .vertical]) {
@@ -385,11 +386,13 @@ struct EpubReaderView: View {
                 if document.chapters.isEmpty {
                     DetailPlaceholder(title: "没有可读章节", systemImage: "book.closed", message: "这个 EPUB 没有找到可阅读的 HTML/XHTML 章节。")
                 } else {
-                    HSplitView {
+                    HStack(spacing: 0) {
                         if showsChapters {
                             chapterList(document)
+                            Divider()
                         }
                         chapterContent(document)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             } else if let errorMessage {
@@ -417,7 +420,7 @@ struct EpubReaderView: View {
                     .tag(chapter.id)
             }
         }
-        .frame(minWidth: 160, idealWidth: 220, maxWidth: 300)
+        .frame(width: 200)
         .scrollContentBackground(.hidden)
         .background(.bar)
     }
