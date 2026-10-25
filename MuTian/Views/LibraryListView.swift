@@ -207,6 +207,7 @@ private struct LibraryToolbar<FilterMenu: View>: ViewModifier {
     let filterMenu: FilterMenu
 
     func body(content: Content) -> some View {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content.toolbar {
                 ToolbarItemGroup { viewControls }
@@ -216,11 +217,18 @@ private struct LibraryToolbar<FilterMenu: View>: ViewModifier {
                 ToolbarItem { rescanButton }
             }
         } else {
-            content.toolbar {
-                ToolbarItemGroup { viewControls }
-                ToolbarItem { importButton }
-                ToolbarItem { rescanButton }
-            }
+            compatibleToolbar(content)
+        }
+        #else
+        compatibleToolbar(content)
+        #endif
+    }
+
+    private func compatibleToolbar(_ content: Content) -> some View {
+        content.toolbar {
+            ToolbarItemGroup { viewControls }
+            ToolbarItem { importButton }
+            ToolbarItem { rescanButton }
         }
     }
 
