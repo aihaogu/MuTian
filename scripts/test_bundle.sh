@@ -5,6 +5,8 @@ TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mutian-bundle.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
 /usr/bin/ditto "$ROOT_DIR/dist/木天.app" "$TEST_DIR/木天.app"
 ENGINE="$TEST_DIR/木天.app/Contents/Resources/bookget/bookget"
+EXPECTED_VERSION="$(tr -d '\r\n' < "$ROOT_DIR/VERSION")"
+test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$TEST_DIR/木天.app/Contents/Info.plist")" = "$EXPECTED_VERSION"
 /usr/bin/codesign --verify --deep --strict "$TEST_DIR/木天.app"
 /usr/bin/env -i PATH=/usr/bin:/bin "$ENGINE" --version
 printf 'offline image fixture' > "$TEST_DIR/fixture.jpg"

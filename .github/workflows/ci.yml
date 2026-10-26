@@ -17,6 +17,8 @@ jobs:
       - name: Swift, library, reader and download checks
         run: ./scripts/test_all.sh
       - name: Build portable application
+        env:
+          MUTIAN_BUILD_CONFIGURATION: release
         run: ./script/build_and_run.sh --build
       - name: Verify relocated downloader without Python on PATH
         run: ./scripts/test_bundle.sh

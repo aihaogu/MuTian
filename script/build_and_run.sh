@@ -18,6 +18,16 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 APP_ICON_SOURCE="$ROOT_DIR/MuTian/Resources/AppIcon.icns"
 
 cd "$ROOT_DIR"
+APP_VERSION="$(tr -d '\r\n' < "$ROOT_DIR/VERSION")"
+BUILD_CONFIGURATION="${MUTIAN_BUILD_CONFIGURATION:-debug}"
+case "$BUILD_CONFIGURATION" in
+  debug|release) ;;
+  *) echo "Unsupported build configuration: $BUILD_CONFIGURATION" >&2; exit 2 ;;
+esac
+if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "Invalid version in VERSION" >&2
+  exit 2
+fi
 
 case "$MODE" in
   --build|build|run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify) ;;
@@ -26,8 +36,8 @@ esac
 
 export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT_DIR/.build/module-cache}"
 export SWIFT_MODULECACHE_PATH="${SWIFT_MODULECACHE_PATH:-$CLANG_MODULE_CACHE_PATH}"
-swift build --disable-sandbox
-BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+swift build --disable-sandbox --configuration "$BUILD_CONFIGURATION"
+BUILD_BINARY="$(swift build --configuration "$BUILD_CONFIGURATION" --show-bin-path)/$APP_NAME"
 
 "$ROOT_DIR/scripts/build_bookget_macos.sh"
 
@@ -68,9 +78,9 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundleDisplayName</key>
   <string>$DISPLAY_NAME</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>100</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleIconFile</key>
