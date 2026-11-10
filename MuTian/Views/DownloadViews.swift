@@ -42,18 +42,17 @@ struct DownloadsView: View {
         let tasks = downloadStore.tasks.filter(filter.includes)
 
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 32) {
+                PageMasthead(eyebrow: "数字古籍", title: "下载", subtitle: subtitle)
+
                 if let error = downloadStore.persistenceError {
                     persistenceBanner(error)
                 }
 
                 DownloadComposer()
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("下载任务")
-                            .font(.system(.headline, design: .serif))
-                        Spacer()
+                VStack(alignment: .leading, spacing: 14) {
+                    SectionHeading(title: "下载任务") {
                         Picker("筛选", selection: $filter) {
                             ForEach(DownloadFilter.allCases) { filter in
                                 Text("\(filter.rawValue) \(downloadStore.tasks.filter(filter.includes).count)")
@@ -69,9 +68,9 @@ struct DownloadsView: View {
                         Text(downloadStore.tasks.isEmpty ? "还没有下载任务。在上方粘贴链接开始第一次下载。" : "这一类下没有任务。")
                             .font(.callout)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 80)
+                            .frame(maxWidth: .infinity, minHeight: 96)
                     } else {
-                        LazyVStack(spacing: 8) {
+                        LazyVStack(spacing: 10) {
                             ForEach(tasks) { task in
                                 DownloadTaskCard(task: task)
                             }
@@ -79,13 +78,16 @@ struct DownloadsView: View {
                     }
                 }
             }
-            .padding(24)
-            .frame(maxWidth: 920)
+            .padding(.horizontal, 32)
+            .padding(.top, 14)
+            .padding(.bottom, 44)
+            .frame(maxWidth: 940)
             .frame(maxWidth: .infinity)
         }
         .background(MuTianTheme.detailBackground)
         .navigationTitle("下载")
-        .navigationSubtitle(subtitle)
+        .paperScrollEdge()
+        .hidingToolbarTitle()
         .toolbar {
             ToolbarItem {
                 Button {
@@ -116,7 +118,11 @@ struct DownloadsView: View {
         }
         .font(.callout)
         .padding(12)
-        .background(MuTianTheme.cinnabar.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(MuTianTheme.cinnabar.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(MuTianTheme.cinnabar.opacity(0.25), lineWidth: 1)
+        }
     }
 
     private func openDownloadFolder() {
@@ -136,9 +142,10 @@ private struct DownloadComposer: View {
     @State private var showsOptions = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("新建下载")
-                .font(.system(.headline, design: .serif))
+                .font(.song(16, weight: .semibold))
+                .foregroundStyle(MuTianTheme.ink)
 
             HStack(spacing: 8) {
                 Image(systemName: "link")
@@ -157,12 +164,12 @@ private struct DownloadComposer: View {
                     .help("清空链接")
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(MuTianTheme.paper, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(MuTianTheme.detailBackground, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(MuTianTheme.hairline, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(MuTianTheme.rule, lineWidth: 1)
             }
 
             HStack(spacing: 14) {
@@ -189,6 +196,7 @@ private struct DownloadComposer: View {
                     .disabled(trimmedURL.isEmpty)
                 Button("开始下载") { submit(startDownload: true) }
                     .buttonStyle(.borderedProminent)
+                    .tint(MuTianTheme.cinnabar)
                     .disabled(trimmedURL.isEmpty)
             }
             .font(.callout)
@@ -280,25 +288,26 @@ private struct DownloadTaskCard: View {
                 .padding(14)
             }
         }
-        .background(MuTianTheme.paper, in: RoundedRectangle(cornerRadius: 8))
+        .background(MuTianTheme.paper, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isExpanded ? MuTianTheme.accent.opacity(0.35) : MuTianTheme.hairline, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isExpanded ? MuTianTheme.accent.opacity(0.4) : MuTianTheme.hairline, lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.035), radius: 6, y: 2)
         .contextMenu { menuItems }
     }
 
     private var summary: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: task.status.symbol)
-                .font(.title2)
+                .font(.system(size: 20, weight: .light))
                 .foregroundStyle(MuTianTheme.downloadColor(task.status))
                 .frame(width: 26)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(.body, design: task.parsedTitle == nil ? .default : .serif))
-                    .fontWeight(.medium)
+                    .font(task.parsedTitle == nil ? .system(size: 13, weight: .medium) : .song(15, weight: .medium))
+                    .foregroundStyle(MuTianTheme.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -608,7 +617,11 @@ private struct DownloadLogView: View {
                     .padding(10)
             }
             .frame(height: 160)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+            .background(MuTianTheme.detailBackground, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(MuTianTheme.hairline, lineWidth: 1)
+            }
         }
     }
 }

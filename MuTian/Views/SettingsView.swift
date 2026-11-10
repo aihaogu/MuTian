@@ -46,7 +46,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 370)
-        .tint(MuTianTheme.accent)
+        .tint(MuTianTheme.controlInk)
     }
 
     private var isBuiltInEngine: Bool {

@@ -8,29 +8,29 @@ struct SidebarView: View {
     var body: some View {
         let counts = ClassificationCounts(books: libraryStore.books, store: libraryStore)
 
-        List(selection: $libraryStore.sidebarSelection) {
+        List {
             Section {
-                Label("浏览", systemImage: "books.vertical")
-                    .badge(libraryStore.books.count)
-                    .tag(SidebarSelection.all)
-                Label("收藏", systemImage: "star")
-                    .badge(libraryStore.books.filter(\.isFavorite).count)
-                    .tag(SidebarSelection.favorites)
-                HStack {
-                    Label("下载", systemImage: "arrow.down.circle")
-                    Spacer(minLength: 4)
+                SidebarNavRow(title: "浏览", systemImage: "books.vertical", count: libraryStore.books.count)
+                    .sidebarDestination(.all, in: libraryStore)
+                SidebarNavRow(
+                    title: "收藏",
+                    systemImage: "star",
+                    count: libraryStore.books.filter(\.isFavorite).count
+                )
+                .sidebarDestination(.favorites, in: libraryStore)
+                SidebarNavRow(title: "下载", systemImage: "arrow.down.circle") {
                     if downloadStore.hasRunningTasks {
                         ProgressView()
                             .controlSize(.mini)
                             .help("有下载任务正在运行")
                     }
                 }
-                .tag(SidebarSelection.downloads)
-                Label("统计", systemImage: "chart.bar")
-                    .tag(SidebarSelection.statistics)
+                .sidebarDestination(.downloads, in: libraryStore)
+                SidebarNavRow(title: "统计", systemImage: "chart.bar")
+                    .sidebarDestination(.statistics, in: libraryStore)
             }
 
-            Section("四库分类") {
+            Section {
                 ForEach(libraryStore.children(of: nil)) { node in
                     ClassificationSidebarRow(
                         node: node,
@@ -38,12 +38,23 @@ struct SidebarView: View {
                         expandedClassificationIDs: $expandedClassificationIDs
                     )
                 }
+            } header: {
+                Text("四库")
+                    .font(.song(11, weight: .semibold))
+                    .tracking(4)
+                    .foregroundStyle(.secondary)
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(MuTianTheme.sidebarBackground)
         .navigationTitle("木天")
         .safeAreaInset(edge: .top, spacing: 0) {
-            SidebarStatusStrip()
+            VStack(spacing: 0) {
+                SidebarBrandHeader()
+                SidebarStatusStrip()
+            }
+            .background(MuTianTheme.sidebarBackground)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             SidebarFoldersFooter()
@@ -66,6 +77,111 @@ struct SidebarView: View {
             current = libraryStore.classifications.first { $0.id == parentID }
         }
         return current?.id
+    }
+}
+
+/// 侧栏顶部的名号：一方“木天”小印与馆名。
+private struct SidebarBrandHeader: View {
+    var body: some View {
+        HStack(spacing: 11) {
+            SealMark(text: "木天", size: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("木天")
+                    .font(.song(18, weight: .bold))
+                    .tracking(3)
+                    .foregroundStyle(MuTianTheme.ink)
+                Text("古籍资料库")
+                    .font(.system(size: 10))
+                    .tracking(2.5)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("木天 古籍资料库")
+    }
+}
+
+private struct SidebarCount: View {
+    let value: Int
+
+    var body: some View {
+        if value > 0 {
+            Text(value.formatted())
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+private struct SidebarNavRow<Accessory: View>: View {
+    let title: String
+    let systemImage: String
+    var count: Int = 0
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(MuTianTheme.ink.opacity(0.62))
+                .frame(width: 20)
+            Text(title)
+                .font(.song(14, weight: .medium))
+                .foregroundStyle(MuTianTheme.ink)
+            Spacer(minLength: 4)
+            accessory
+            SidebarCount(value: count)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+extension SidebarNavRow where Accessory == EmptyView {
+    init(title: String, systemImage: String, count: Int = 0) {
+        self.init(title: title, systemImage: systemImage, count: count) { EmptyView() }
+    }
+}
+
+/// 选中行：淡墨底，左侧一道朱砂。
+private struct SidebarRowHighlight: View {
+    let isSelected: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(isSelected ? MuTianTheme.ink.opacity(0.075) : .clear)
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule()
+                        .fill(MuTianTheme.cinnabar)
+                        .frame(width: 3)
+                        .padding(.vertical, 6)
+                        .padding(.leading, 1)
+                }
+            }
+            .padding(.horizontal, 8)
+    }
+}
+
+private extension View {
+    /// 侧栏的一行：整行可点，选中态自绘，不使用系统的强调色高亮。
+    @MainActor
+    func sidebarDestination(_ destination: SidebarSelection, in store: LibraryStore) -> some View {
+        let isSelected = store.sidebarSelection == destination
+        return Button {
+            store.sidebarSelection = destination
+        } label: {
+            self
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .listRowBackground(SidebarRowHighlight(isSelected: isSelected))
     }
 }
 
@@ -156,23 +272,33 @@ private struct SidebarFoldersFooter: View {
         Button {
             openWindow(id: LibraryFoldersWindow.id)
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "folder.badge.gearshape")
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 9) {
+                Image(systemName: "folder")
+                    .font(.system(size: 12))
+                    .foregroundStyle(MuTianTheme.ink.opacity(0.62))
+                    .frame(width: 20)
                 Text("资料库文件夹")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
                 Text("\(libraryStore.roots.count)")
+                    .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
             }
-            .font(.callout)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("查看资料库来自哪些文件夹，添加或移除位置（⇧⌘L）")
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) { Divider() }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(MuTianTheme.sidebarBackground)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(MuTianTheme.hairline)
+                .frame(height: 1)
+                .padding(.horizontal, 12)
+        }
     }
 }
 
@@ -220,14 +346,28 @@ private struct ClassificationSidebarRow: View {
     }
 
     private var rowLabel: some View {
-        Label(node.name, systemImage: iconName)
-            .lineLimit(1)
-            .badge(counts.total(for: node.id))
-            .tag(SidebarSelection.classification(node.id))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                libraryStore.sidebarSelection = .classification(node.id)
+        HStack(spacing: 9) {
+            if node.parentID == nil {
+                SealMark(
+                    text: MuTianTheme.sectionGlyph(forClassificationID: node.id, name: node.name),
+                    color: MuTianTheme.sealColor(forClassificationID: node.id),
+                    size: 18
+                )
+                .frame(width: 20)
+                Text(node.name)
+                    .font(.song(14, weight: .medium))
+                    .foregroundStyle(MuTianTheme.ink)
+            } else {
+                Text(node.name)
+                    .font(.system(size: 13))
+                    .foregroundStyle(MuTianTheme.ink.opacity(0.86))
             }
+            Spacer(minLength: 4)
+            SidebarCount(value: counts.total(for: node.id))
+        }
+        .lineLimit(1)
+        .padding(.vertical, node.parentID == nil ? 2 : 0)
+        .sidebarDestination(.classification(node.id), in: libraryStore)
     }
 
     private var expandedBinding: Binding<Bool> {
@@ -240,10 +380,5 @@ private struct ClassificationSidebarRow: View {
                 expandedClassificationIDs.remove(node.id)
             }
         }
-    }
-
-    private var iconName: String {
-        if node.id == Classification.defaultUnclassifiedID { return "tray" }
-        return node.parentID == nil ? "books.vertical" : "folder"
     }
 }

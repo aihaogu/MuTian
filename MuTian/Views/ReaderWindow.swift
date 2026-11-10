@@ -21,6 +21,7 @@ struct ReaderWindow: View {
         }
         .frame(minWidth: 640, minHeight: 480)
         .background(MuTianTheme.paper)
+        .tint(MuTianTheme.controlInk)
     }
 }
 

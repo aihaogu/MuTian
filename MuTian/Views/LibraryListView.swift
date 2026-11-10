@@ -7,8 +7,8 @@ private enum LibraryBrowseMode: String {
 }
 
 private struct LibraryBookSection: Identifiable {
+    /// 分类 ID
     let id: String
-    let title: String
     let books: [Book]
 }
 
@@ -30,27 +30,38 @@ struct LibraryListView: View {
             if books.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(sections) { section in
-                            bookSection(section, showsTitle: sections.count > 1)
-                        }
+                GeometryReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 34) {
+                            PageMasthead(
+                                eyebrow: masthead.eyebrow,
+                                title: masthead.title,
+                                subtitle: mastheadSubtitle(count: books.count)
+                            )
 
-                        if visibleBookLimit < books.count {
-                            LoadMoreBooksView(shown: visibleBooks.count, total: books.count) {
-                                loadMore(total: books.count)
+                            ForEach(sections) { section in
+                                bookSection(section, showsTitle: sections.count > 1)
+                            }
+
+                            if visibleBookLimit < books.count {
+                                LoadMoreBooksView(shown: visibleBooks.count, total: books.count) {
+                                    loadMore(total: books.count)
+                                }
                             }
                         }
+                        // 详情栏展开时书单变窄，页边距随之收紧。
+                        .padding(.horizontal, proxy.size.width < 480 ? 20 : 32)
+                        .padding(.top, 14)
+                        .padding(.bottom, 36)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MuTianTheme.detailBackground)
         .navigationTitle(selectionTitle)
-        .navigationSubtitle("\(books.count) 部")
+        .paperScrollEdge()
+        .hidingToolbarTitle()
         .modifier(LibraryToolbar(browseModeRaw: $browseModeRaw, filterMenu: filterMenu))
         .onChange(of: libraryStore.searchText) { _, _ in
             resetPagination()
@@ -94,6 +105,33 @@ struct LibraryListView: View {
         case .classification(let id): return libraryStore.classificationName(for: id)
         case .source(let source): return source
         }
+    }
+
+    private var masthead: (eyebrow: String, title: String) {
+        switch libraryStore.sidebarSelection {
+        case .all, .downloads, .statistics:
+            return ("资料库", "全部藏书")
+        case .favorites:
+            return ("资料库", "收藏")
+        case .status(let status):
+            return ("整理状态", status.rawValue)
+        case .source(let source):
+            return ("来源", source)
+        case .classification(let id):
+            guard let node = libraryStore.classifications.first(where: { $0.id == id }) else {
+                return ("四库", "未分类")
+            }
+            let parent = node.parentID.flatMap { parentID in
+                libraryStore.classifications.first { $0.id == parentID }
+            }
+            return (parent?.name ?? "四库", node.name)
+        }
+    }
+
+    private func mastheadSubtitle(count: Int) -> String {
+        let query = libraryStore.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let total = "\(count.formatted()) 部"
+        return query.isEmpty ? total : "“\(query)” · \(total)"
     }
 
     private var filterMenu: some View {
@@ -141,23 +179,17 @@ struct LibraryListView: View {
 
     @ViewBuilder
     private func bookSection(_ section: LibraryBookSection, showsTitle: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: browseMode == .covers ? 18 : 8) {
             if showsTitle {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(section.title)
-                        .font(.system(.headline, design: .serif))
-                    Text("\(section.books.count)")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+                sectionHeading(section)
             }
 
             switch browseMode {
             case .covers:
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 124, maximum: 168), spacing: 14)],
+                    columns: [GridItem(.adaptive(minimum: 128, maximum: 172), spacing: 22, alignment: .top)],
                     alignment: .leading,
-                    spacing: 14
+                    spacing: 26
                 ) {
                     ForEach(section.books) { book in
                         BookCoverButton(book: book)
@@ -173,21 +205,45 @@ struct LibraryListView: View {
         }
     }
 
+    private func sectionHeading(_ section: LibraryBookSection) -> some View {
+        let node = libraryStore.classifications.first { $0.id == section.id }
+        let parent = node?.parentID.flatMap { parentID in
+            libraryStore.classifications.first { $0.id == parentID }
+        }
+        let top = parent ?? node
+
+        return SectionHeading(title: node?.name ?? "未分类", note: parent?.name ?? "") {
+            SealMark(
+                text: MuTianTheme.sectionGlyph(forClassificationID: top?.id ?? section.id, name: top?.name ?? ""),
+                color: MuTianTheme.sealColor(forClassificationID: top?.id ?? section.id),
+                size: 18
+            )
+        } trailing: {
+            Text("\(section.books.count.formatted()) 部")
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+        }
+    }
+
     private func groupedBooks(_ books: [Book]) -> [LibraryBookSection] {
         var grouped: [String: [Book]] = [:]
         var order: [String] = []
 
+        let knownIDs = Set(libraryStore.classifications.map(\.id))
         for book in books {
-            let title = libraryStore.classificationName(for: book.classificationID)
-            if grouped[title] == nil {
-                grouped[title] = []
-                order.append(title)
+            let id = knownIDs.contains(book.classificationID)
+                ? book.classificationID
+                : Classification.defaultUnclassifiedID
+            if grouped[id] == nil {
+                grouped[id] = []
+                order.append(id)
             }
-            grouped[title]?.append(book)
+            grouped[id]?.append(book)
         }
 
-        return order.map { title in
-            LibraryBookSection(id: title, title: title, books: grouped[title] ?? [])
+        return order.map { id in
+            LibraryBookSection(id: id, books: grouped[id] ?? [])
         }
     }
 
@@ -300,6 +356,7 @@ private struct BookCoverButton: View {
 private struct BookListButton: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let book: Book
+    @State private var isHovering = false
 
     var body: some View {
         Button {
@@ -307,11 +364,30 @@ private struct BookListButton: View {
         } label: {
             BookRowView(book: book)
                 .padding(.horizontal, 10)
-                .background(isSelected ? MuTianTheme.accent.opacity(0.10) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .background(rowFill, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .overlay(alignment: .leading) {
+                    if isSelected {
+                        Rectangle()
+                            .fill(MuTianTheme.cinnabar)
+                            .frame(width: 2)
+                            .padding(.vertical, 7)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(MuTianTheme.hairline)
+                        .frame(height: 1)
+                        .padding(.horizontal, 10)
+                }
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         .contextMenu { BookActions(book: book) }
+    }
+
+    private var rowFill: Color {
+        if isSelected { return MuTianTheme.cinnabar.opacity(0.08) }
+        return isHovering ? MuTianTheme.ink.opacity(0.04) : .clear
     }
 
     private var isSelected: Bool {
@@ -322,42 +398,47 @@ private struct BookListButton: View {
 private struct BookCoverView: View {
     let book: Book
     let isSelected: Bool
+    @State private var isHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            BookCoverThumbnailView(book: book)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7)
-                        .stroke(isSelected ? MuTianTheme.accent : MuTianTheme.hairline, lineWidth: isSelected ? 2 : 1)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            BookCoverThumbnailView(book: book, isRaised: isHovering || isSelected)
                 .overlay(alignment: .topTrailing) {
                     if book.isFavorite {
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(4)
-                            .background(MuTianTheme.cinnabar, in: Circle())
-                            .padding(6)
+                        SealMark(text: "藏", size: 20)
+                            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                            .padding(7)
+                            .accessibilityLabel("已收藏")
                     }
                 }
+                .padding(5)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(MuTianTheme.cinnabar, lineWidth: 1.5)
+                    }
+                }
+                .offset(y: isHovering ? -2 : 0)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(book.title)
-                    .font(.system(.callout, design: .serif))
-                    .fontWeight(.medium)
-                    .foregroundStyle(isSelected ? MuTianTheme.accent : .primary)
+                    .font(.song(13, weight: .medium))
+                    .foregroundStyle(isSelected ? MuTianTheme.cinnabar : MuTianTheme.ink)
                     .lineLimit(2)
+                    .lineSpacing(1.5)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.system(size: 11))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 2)
+            .padding(.horizontal, 5)
         }
-        .padding(4)
         .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.16), value: isHovering)
     }
 
     private var subtitle: String {
@@ -365,7 +446,7 @@ private struct BookCoverView: View {
             return book.author
         }
         if book.pageCount > 0 {
-            return "\(book.pageCount) 页"
+            return "\(book.pageCount.formatted()) 页"
         }
         return book.fileType.rawValue
     }
@@ -394,19 +475,20 @@ struct BookRowView: View {
     let book: Book
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 11) {
             Image(systemName: MuTianTheme.fileTypeIcon(book.fileType))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12, weight: .light))
+                .foregroundStyle(.tertiary)
                 .frame(width: 18)
 
             Text(book.title)
-                .font(.system(.body, design: .serif))
+                .font(.song(14))
+                .foregroundStyle(MuTianTheme.ink)
                 .lineLimit(1)
 
             if book.isFavorite {
-                Image(systemName: "star.fill")
-                    .font(.caption2)
-                    .foregroundStyle(MuTianTheme.cinnabar)
+                SealMark(text: "藏", size: 14)
+                    .accessibilityLabel("已收藏")
             }
 
             Spacer(minLength: 12)
@@ -416,18 +498,18 @@ struct BookRowView: View {
             }
 
             Text(book.author.isEmpty ? "—" : book.author)
-                .font(.callout)
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(width: 110, alignment: .leading)
 
-            Text(book.pageCount > 0 ? "\(book.pageCount) 页" : "")
-                .font(.callout)
+            Text(book.pageCount > 0 ? "\(book.pageCount.formatted()) 页" : "")
+                .font(.system(size: 12))
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
-                .frame(width: 60, alignment: .trailing)
+                .frame(width: 64, alignment: .trailing)
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 9)
         .contentShape(Rectangle())
     }
 }

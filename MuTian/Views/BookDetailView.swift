@@ -16,7 +16,9 @@ struct BookDetailView: View {
         if let bookID, let book = libraryStore.books.first(where: { $0.id == bookID }) {
             VStack(spacing: 0) {
                 BookHeaderView(book: book, tab: $tab)
-                Divider()
+                Rectangle()
+                    .fill(MuTianTheme.hairline)
+                    .frame(height: 1)
                 switch tab {
                 case .reader:
                     ReaderView(book: book)
@@ -45,8 +47,8 @@ private struct BookHeaderView: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(book.title)
-                .font(.system(.title3, design: .serif))
-                .fontWeight(.semibold)
+                .font(.song(17, weight: .semibold))
+                .foregroundStyle(MuTianTheme.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .help(book.title)
@@ -100,9 +102,9 @@ private struct BookHeaderView: View {
             .buttonStyle(.borderless)
             .imageScale(.large)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+        .background(MuTianTheme.detailBackground)
     }
 }
 

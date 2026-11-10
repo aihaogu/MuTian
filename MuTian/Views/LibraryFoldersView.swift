@@ -48,7 +48,7 @@ struct LibraryFoldersView: View {
             bottomBar
         }
         .frame(minWidth: 560, minHeight: 360)
-        .tint(MuTianTheme.accent)
+        .tint(MuTianTheme.controlInk)
         .confirmationDialog(removalTitle, isPresented: removalBinding) {
             Button("移除", role: .destructive) {
                 if libraryStore.removeRoots(pendingRemoval) {
@@ -151,7 +151,7 @@ private struct LibraryFolderRow: View {
         HStack(spacing: 10) {
             Image(systemName: exists ? iconName : "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(exists ? MuTianTheme.accent : MuTianTheme.cinnabar)
+                .foregroundStyle(exists ? MuTianTheme.controlInk : MuTianTheme.cinnabar)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {

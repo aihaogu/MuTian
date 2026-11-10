@@ -9,6 +9,9 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / "MuTian" / "Resources"
 SOURCE = RESOURCES / "AppIconSource.png"
+# Optional simplified artwork for small sizes (pixel size <= SMALL_MAX_PX).
+SMALL_SOURCE = RESOURCES / "AppIconSourceSmall.png"
+SMALL_MAX_PX = 64
 ICONSET = RESOURCES / "AppIcon.iconset"
 ICNS = RESOURCES / "AppIcon.icns"
 
@@ -37,15 +40,22 @@ ICNS_CHUNKS = {
 }
 
 
-def write_iconset() -> None:
-    image = Image.open(SOURCE).convert("RGBA")
+def load_source(path: Path) -> Image.Image:
+    image = Image.open(path).convert("RGBA")
     if image.size != (1024, 1024):
-        raise ValueError(f"{SOURCE} must be 1024x1024, got {image.size}")
+        raise ValueError(f"{path} must be 1024x1024, got {image.size}")
+    return image
+
+
+def write_iconset() -> None:
+    image = load_source(SOURCE)
+    small = load_source(SMALL_SOURCE) if SMALL_SOURCE.exists() else image
 
     ICONSET.mkdir(parents=True, exist_ok=True)
     for filename, size in ICONSET_SIZES.items():
         target = ICONSET / filename
-        image.resize((size, size), Image.Resampling.LANCZOS).save(target)
+        source = small if size <= SMALL_MAX_PX else image
+        source.resize((size, size), Image.Resampling.LANCZOS).save(target)
 
 
 def write_icns() -> None:

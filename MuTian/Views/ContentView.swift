@@ -10,6 +10,7 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             workspace
+                .toolbarBackground(.hidden, for: .windowToolbar)
         }
         .searchable(text: $libraryStore.searchText, placement: .toolbar, prompt: "搜索书名、作者、来源、标签")
         .onChange(of: libraryStore.searchText) { _, _ in
@@ -18,7 +19,8 @@ struct ContentView: View {
         .onChange(of: libraryStore.sidebarSelection) { _, _ in
             libraryStore.syncSelectionWithFilter()
         }
-        .tint(MuTianTheme.accent)
+        .tint(MuTianTheme.controlInk)
+        .background(PaperWindowBackground())
     }
 
     @ViewBuilder
