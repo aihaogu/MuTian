@@ -10,4 +10,5 @@ swift build --disable-sandbox
 ./scripts/test_app_paths.sh
 ./scripts/test_readers.sh
 ./scripts/test_stores.sh
+./scripts/test_metadata.sh
 python3 -m unittest discover -s Tests/DownloadTests -v

@@ -24,9 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct MuTianApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var libraryStore = LibraryStore()
-    @StateObject private var settingsStore = SettingsStore()
-    @StateObject private var downloadStore = DownloadTaskStore()
+    // Held with @State, not @StateObject: the scene itself must not observe the stores.
+    // With @StateObject every library change (selection, page switch, each keystroke, download
+    // progress) re-evaluated the whole scene list and rebuilt the menu bar commands.
+    // Views still observe the stores through .environmentObject.
+    @State private var libraryStore = LibraryStore()
+    @State private var settingsStore = SettingsStore()
+    @State private var downloadStore = DownloadTaskStore()
 
     var body: some Scene {
         WindowGroup("木天") {

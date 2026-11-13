@@ -8,6 +8,9 @@ struct MetadataCandidate {
     var classificationID: String?
     var sourceName: String?
     var sourceURL: String?
+    var publisher: String? = nil
+    var seriesName: String? = nil
+    var volume: String? = nil
 }
 
 enum MetadataParser {
@@ -34,7 +37,10 @@ enum MetadataParser {
             let author = firstString(object, keys: ["author", "creator", "dc:creator"])
             let source = firstString(object, keys: ["attribution", "provider", "source", "repository"])
             let sourceURL = firstString(object, keys: ["@id", "id", "url", "homepage"])
-            return MetadataCandidate(title: title, author: author, dynasty: nil, edition: nil, classificationID: nil, sourceName: source, sourceURL: sourceURL)
+            var candidate = MetadataCandidate(title: title, author: author, dynasty: nil, edition: nil, classificationID: nil, sourceName: source, sourceURL: sourceURL)
+            candidate.publisher = firstString(object, keys: ["publisher", "dc:publisher"])
+            candidate.seriesName = firstString(object, keys: ["series", "collection"])
+            return candidate
         }
         return MetadataCandidate(title: nil, author: nil, dynasty: nil, edition: nil, classificationID: nil, sourceName: nil, sourceURL: nil)
     }
@@ -69,16 +75,24 @@ enum MetadataParser {
     }
 
     private static func inferMetadata(for itemURL: URL, root: URL) -> MetadataCandidate {
-        let baseName = itemURL.deletingPathExtension().lastPathComponent
-        return MetadataCandidate(
-            title: nil,
-            author: inferAuthor(from: baseName),
-            dynasty: inferDynasty(from: baseName),
-            edition: inferEdition(from: baseName),
+        let parsed = BookNameParser.parse(itemURL: itemURL, root: root)
+        var candidate = MetadataCandidate(
+            title: displayTitle(parsed),
+            author: parsed.author.nilIfEmpty,
+            dynasty: parsed.dynasty.nilIfEmpty,
+            edition: parsed.edition.nilIfEmpty,
             classificationID: inferClassificationID(for: itemURL, root: root),
             sourceName: nil,
             sourceURL: nil
         )
+        candidate.publisher = parsed.publisher.nilIfEmpty
+        candidate.seriesName = parsed.series.nilIfEmpty
+        candidate.volume = parsed.volume.nilIfEmpty
+        return candidate
+    }
+
+    private static func displayTitle(_ parsed: ParsedBookName) -> String? {
+        parsed.title.nilIfEmpty
     }
 
     private static func fillMissing(_ metadata: inout MetadataCandidate, with fallback: MetadataCandidate) {
@@ -88,6 +102,10 @@ enum MetadataParser {
         if isBlank(metadata.classificationID) { metadata.classificationID = fallback.classificationID }
         if isBlank(metadata.sourceName) { metadata.sourceName = fallback.sourceName }
         if isBlank(metadata.sourceURL) { metadata.sourceURL = fallback.sourceURL }
+        if isBlank(metadata.title) { metadata.title = fallback.title }
+        if isBlank(metadata.publisher) { metadata.publisher = fallback.publisher }
+        if isBlank(metadata.seriesName) { metadata.seriesName = fallback.seriesName }
+        if isBlank(metadata.volume) { metadata.volume = fallback.volume }
     }
 
     private static func inferClassificationID(for itemURL: URL, root: URL) -> String? {
@@ -111,13 +129,19 @@ enum MetadataParser {
         return match
     }
 
+    /// Classification id for a folder such as `03 总集类`, `01正史` or `01儒家（缺孟子正义）`.
+    static func classificationID(forFolderName name: String) -> String? {
+        classificationIDByName[normalizeClassificationComponent(name)]
+    }
+
     private static func normalizeClassificationComponent(_ component: String) -> String {
         var value = component.trimmingCharacters(in: .whitespacesAndNewlines)
         value = value.replacingOccurrences(
-            of: #"^\d+\s*[\.\-、_]?\s*"#,
+            of: #"^[0-9]+\s*[\.\-、_]?\s*"#,
             with: "",
             options: .regularExpression
         )
+        value = value.replacingOccurrences(of: #"[（(][^）)]*[）)]$"#, with: "", options: .regularExpression)
         if value.hasSuffix("类") {
             value.removeLast()
         }
@@ -146,95 +170,6 @@ enum MetadataParser {
         "楚辞": "ji.0", "别集": "ji.1", "总集": "ji.2", "诗文评": "ji.3", "词曲": "ji.4",
         "其他": "other", "丛书": "other.0", "方志": "other.1", "谱牒": "other.2", "敦煌吐鲁番文献": "other.3"
     ]
-
-    private static func inferDynasty(from name: String) -> String? {
-        firstRegexMatch(in: name, pattern: #"[［\[\(（](先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)[］\]\)）]"#)
-            ?? firstRegexMatch(in: name, pattern: #"(^|[\-·_\s])(先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)(?=[^代]|$)"#, captureIndex: 2)
-    }
-
-    private static func inferAuthor(from name: String) -> String? {
-        if let author = firstRegexMatch(
-            in: name,
-            pattern: #"[［\[\(（](?:先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)[］\]\)）]\s*[_\-·\s]*([^：:·_\-\s，,（）\(\)]+)"#
-        ) {
-            return cleanAuthor(author)
-        }
-
-        if let author = firstRegexMatch(
-            in: name,
-            pattern: #"[\-·_\s](?:先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)[·\s]*([^：:·_\-\s，,（）\(\)]+?)(?:撰|著|辑|编|校|注|译)"#
-        ) {
-            return cleanAuthor(author)
-        }
-
-        if let author = firstRegexMatch(
-            in: name,
-            pattern: #"[\-·_]\s*(?:先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)[·\s]+([^：:·_\-\s，,（）\(\)]+)"#
-        ) {
-            return cleanAuthor(author)
-        }
-
-        if let author = firstRegexMatch(
-            in: name,
-            pattern: #"[\-·_]\s*([^：:·_\-\s，,（）\(\)]+?)(?:撰|著|辑|编|校|注|译)"#
-        ) {
-            return cleanAuthor(author)
-        }
-
-        let parts = name.split(whereSeparator: { "-_·".contains($0) }).map { String($0) }
-        if parts.count >= 2 {
-            let candidate = cleanAuthor(parts[1])
-            if isLikelyPersonName(candidate) {
-                return candidate
-            }
-        }
-        return nil
-    }
-
-    private static func inferEdition(from name: String) -> String? {
-        let parts = name.split(whereSeparator: { "-_·".contains($0) }).map {
-            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return parts.first { part in
-            part.contains("出版社")
-                || part.contains("书局")
-                || part.contains("古籍")
-                || part.range(of: #"(18|19|20)\d{2}"#, options: .regularExpression) != nil
-        }
-    }
-
-    private static func cleanAuthor(_ value: String) -> String {
-        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        result = result.replacingOccurrences(
-            of: #"^(先秦|秦|汉|魏|晋|南北朝|隋|唐|五代|宋|辽|金|元|明|清|民国)[·\s]*"#,
-            with: "",
-            options: .regularExpression
-        )
-        result = result.replacingOccurrences(
-            of: #"(撰|著|辑|编|校|注|译|点校|校注|主编)$"#,
-            with: "",
-            options: .regularExpression
-        )
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func isLikelyPersonName(_ value: String) -> Bool {
-        guard (2...6).contains(value.count) else { return false }
-        let blocked = ["中华书局", "上海古籍", "出版社", "书店", "三全本", "标点本", "扫描版", "Z-Library"]
-        guard !blocked.contains(where: { value.contains($0) }) else { return false }
-        return value.range(of: #"^[\p{Han}、]+$"#, options: .regularExpression) != nil
-    }
-
-    private static func firstRegexMatch(in text: String, pattern: String, captureIndex: Int = 1) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = regex.firstMatch(in: text, range: range),
-              match.numberOfRanges > captureIndex,
-              let capture = Range(match.range(at: captureIndex), in: text) else {
-            return nil
-        }
-        return String(text[capture])
-    }
 
     private static func isBlank(_ value: String?) -> Bool {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true

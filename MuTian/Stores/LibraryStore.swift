@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class LibraryStore: ObservableObject {
@@ -14,18 +15,62 @@ final class LibraryStore: ObservableObject {
         Task { @MainActor [weak self] in self?.saveError = error }
     }
     @Published var books: [Book] = [] {
-        didSet { save() }
+        didSet {
+            booksRevision &+= 1
+            if sortOrderChanged(from: oldValue) { sortRank = nil }
+            save()
+        }
     }
     @Published var roots: [LibraryRoot] = [] {
         didSet { save() }
     }
     @Published var classifications: [Classification] = ClassificationSeed.all
     @Published var selectedBookID: UUID?
+    /// ⌘-click multi-selection for batch editing.
+    @Published var checkedBookIDs: Set<UUID> = []
     @Published var isBookDetailVisible: Bool = false
     @Published var sidebarSelection: SidebarSelection = .all
     @Published var searchText: String = ""
     @Published var isScanning: Bool = false
     @Published var lastImportMessage: String = ""
+
+    // MARK: Derived-data caches
+    // Every @Published change re-renders all views that observe the store, and several of them
+    // read the filtered list. These caches keep that to one filter pass per actual change.
+
+    private var booksRevision = 0
+    private struct FilterKey: Equatable {
+        let revision: Int
+        let selection: SidebarSelection
+        let query: String
+        let classificationCount: Int
+    }
+    private var filterCache: (key: FilterKey, rows: [Book])?
+    /// Position of each book in title/volume order; rebuilt only when titles, volumes or membership change.
+    private var sortRank: [UUID: Int]?
+    private var seriesCache: (revision: Int, value: [(name: String, count: Int)])?
+    private var publishersCache: (revision: Int, value: [String])?
+    private var sourcesCache: (revision: Int, value: [String])?
+
+    private func sortOrderChanged(from old: [Book]) -> Bool {
+        guard old.count == books.count else { return true }
+        for (lhs, rhs) in zip(old, books) where lhs.id != rhs.id || lhs.title != rhs.title || lhs.volume != rhs.volume {
+            return true
+        }
+        return false
+    }
+
+    private func currentSortRank() -> [UUID: Int] {
+        if let sortRank { return sortRank }
+        let ordered = books.sorted {
+            let order = $0.title.localizedStandardCompare($1.title)
+            if order != .orderedSame { return order == .orderedAscending }
+            return $0.volumeText.localizedStandardCompare($1.volumeText) == .orderedAscending
+        }
+        let rank = Dictionary(uniqueKeysWithValues: ordered.enumerated().map { ($1.id, $0) })
+        sortRank = rank
+        return rank
+    }
 
     init(libraryFile: URL? = nil, scanner: @escaping @Sendable (URL) -> ScanResult = { FolderScanner.scan(root: $0) }) {
         self.scanner = scanner
@@ -39,7 +84,28 @@ final class LibraryStore: ObservableObject {
     }
 
     var sources: [String] {
-        Array(Set(books.map(\.sourceName).filter { !$0.isEmpty })).sorted()
+        if let sourcesCache, sourcesCache.revision == booksRevision { return sourcesCache.value }
+        let value = Array(Set(books.map(\.sourceName).filter { !$0.isEmpty })).sorted()
+        sourcesCache = (booksRevision, value)
+        return value
+    }
+
+    /// 丛书名及其书目数，按名称排序。
+    var seriesCounts: [(name: String, count: Int)] {
+        if let seriesCache, seriesCache.revision == booksRevision { return seriesCache.value }
+        var counts: [String: Int] = [:]
+        for book in books { if let name = book.seriesName { counts[name, default: 0] += 1 } }
+        let value: [(name: String, count: Int)] = counts.map { (name: $0.key, count: $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        seriesCache = (booksRevision, value)
+        return value
+    }
+
+    var publishers: [String] {
+        if let publishersCache, publishersCache.revision == booksRevision { return publishersCache.value }
+        let value = Array(Set(books.compactMap(\.publisher))).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        publishersCache = (booksRevision, value)
+        return value
     }
 
     func classificationName(for id: String) -> String {
@@ -57,6 +123,15 @@ final class LibraryStore: ObservableObject {
     }
 
     var filteredBooks: [Book] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = FilterKey(revision: booksRevision, selection: sidebarSelection, query: query, classificationCount: classifications.count)
+        if let filterCache, filterCache.key == key { return filterCache.rows }
+        let rows = computeFilteredBooks(query: query)
+        filterCache = (key, rows)
+        return rows
+    }
+
+    private func computeFilteredBooks(query: String) -> [Book] {
         var rows = books
         switch sidebarSelection {
         case .all:
@@ -68,19 +143,24 @@ final class LibraryStore: ObservableObject {
         case .status(let status):
             rows = rows.filter { $0.status == status }
         case .classification(let id):
-            rows = rows.filter { $0.classificationID == id || classificationDescendants(of: id).contains($0.classificationID) }
+            let ids = Set([id] + classificationDescendants(of: id))
+            rows = rows.filter { ids.contains($0.classificationID) }
         case .source(let source):
             rows = rows.filter { $0.sourceName == source }
+        case .series(let series):
+            rows = rows.filter { $0.seriesName == series }
         }
 
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty {
             rows = rows.filter { book in
                 let haystack = [
                     book.title,
+                    book.volumeText,
                     book.author,
                     book.dynasty,
                     book.edition,
+                    book.publisherText,
+                    book.seriesText,
                     book.sourceName,
                     book.localPath,
                     book.notes,
@@ -90,9 +170,8 @@ final class LibraryStore: ObservableObject {
             }
         }
 
-        return rows.sorted {
-            $0.title.localizedStandardCompare($1.title) == .orderedAscending
-        }
+        let rank = currentSortRank()
+        return rows.sorted { (rank[$0.id] ?? .max) < (rank[$1.id] ?? .max) }
     }
 
     func presentImportPanel() {
@@ -252,6 +331,125 @@ final class LibraryStore: ObservableObject {
         books[index] = updated
     }
 
+    // MARK: Bibliographic editing
+
+    /// Books a batch action applies to: the ⌘-clicked ones, otherwise everything in the current list.
+    var batchTargetBooks: [Book] {
+        guard !checkedBookIDs.isEmpty else { return filteredBooks }
+        return books.filter { checkedBookIDs.contains($0.id) }
+    }
+
+    func toggleChecked(_ book: Book) {
+        if checkedBookIDs.contains(book.id) {
+            checkedBookIDs.remove(book.id)
+        } else {
+            checkedBookIDs.insert(book.id)
+        }
+    }
+
+    /// Re-reads file and folder names and proposes field changes for review.
+    func recognitionProposals(for targets: [Book]) -> [BookChangeProposal] {
+        let rootURLs = roots.map { URL(fileURLWithPath: $0.path) }
+        return targets.compactMap { book in
+            let url = URL(fileURLWithPath: book.localPath)
+            let root = rootURLs
+                .filter { isPath(book.localPath, insideOrEqualTo: $0.path) }
+                .max { $0.path.count < $1.path.count }
+            return BookRecognition.proposal(for: book, parsed: BookNameParser.parse(itemURL: url, root: root))
+        }
+    }
+
+    /// Applies reviewed changes in one step, after backing up library.json.
+    @discardableResult
+    func apply(_ proposals: [BookChangeProposal], backupName: String?) -> Int {
+        let accepted = proposals.filter { $0.acceptedCount > 0 }
+        guard loadError == nil, !accepted.isEmpty else { return 0 }
+        if let backupName, !backupLibrary(named: backupName) { return 0 }
+        var updated = books
+        var count = 0
+        let indexByID = Dictionary(uniqueKeysWithValues: updated.enumerated().map { ($1.id, $0) })
+        for proposal in accepted {
+            guard let index = indexByID[proposal.bookID] else { continue }
+            if BookRecognition.apply(proposal, to: &updated[index]) {
+                updated[index].updatedAt = Date()
+                count += 1
+            }
+        }
+        books = updated
+        if backupName != nil {
+            lastImportMessage = "已更新 \(count) 部书目；修改前的资料库已备份。"
+        }
+        return count
+    }
+
+    /// Sets the same values on several books; empty values in `values` clear the field.
+    @discardableResult
+    func batchUpdate(_ ids: Set<UUID>, values: [BookField: String]) -> Int {
+        let proposals = books.filter { ids.contains($0.id) }.compactMap { book -> BookChangeProposal? in
+            let changes = values.compactMap { field, value -> FieldChange? in
+                let newValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard book[keyPath: field.keyPath] != newValue, !(field == .title && newValue.isEmpty) else { return nil }
+                return FieldChange(field: field, oldValue: book[keyPath: field.keyPath], newValue: newValue, isAccepted: true)
+            }
+            return changes.isEmpty ? nil : BookChangeProposal(bookID: book.id, fileName: book.fileName, changes: changes)
+        }
+        return apply(proposals, backupName: "batch-edit")
+    }
+
+    @discardableResult
+    func renameSeries(_ oldName: String, to newName: String) -> Int {
+        let ids = Set(books.filter { $0.seriesName == oldName }.map(\.id))
+        let count = batchUpdate(ids, values: [.series: newName])
+        if count > 0, sidebarSelection == .series(oldName) {
+            sidebarSelection = newName.nilIfEmpty.map { .series($0) } ?? .all
+        }
+        return count
+    }
+
+    func exportCSV(_ targets: [Book]) {
+        let panel = NSSavePanel()
+        panel.title = "导出书目表格"
+        panel.nameFieldStringValue = "木天书目.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try LibraryCSV.export(targets).write(to: url, options: .atomic)
+            lastImportMessage = "已导出 \(targets.count) 部书目到“\(url.lastPathComponent)”。"
+        } catch {
+            lastImportMessage = "导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Reads an edited spreadsheet and returns the differences for review, or nil when cancelled.
+    func proposalsFromCSV() -> [BookChangeProposal]? {
+        let panel = NSOpenPanel()
+        panel.title = "导入书目表格"
+        panel.message = "选择由木天导出、修改后的 CSV 表格；按 ID 列对应书目。"
+        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        do {
+            return try LibraryCSV.proposals(from: Data(contentsOf: url), books: books)
+        } catch {
+            lastImportMessage = "无法导入表格：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    private func backupLibrary(named name: String) -> Bool {
+        guard flush() else { return false }
+        guard FileManager.default.fileExists(atPath: libraryFile.path) else { return true }
+        do {
+            let backup = libraryFile.deletingLastPathComponent()
+                .appendingPathComponent("library-before-\(name)-\(UUID().uuidString).json")
+            try FileManager.default.copyItem(at: libraryFile, to: backup)
+            return true
+        } catch {
+            lastImportMessage = "无法备份资料库，未修改书目：\(error.localizedDescription)"
+            return false
+        }
+    }
+
     func toggleFavorite(_ book: Book) {
         var edited = book
         edited.isFavorite.toggle()
@@ -315,6 +513,9 @@ final class LibraryStore: ObservableObject {
 
     func syncSelectionWithFilter() {
         let rows = filteredBooks
+        if !checkedBookIDs.isEmpty {
+            checkedBookIDs.formIntersection(rows.map(\.id))
+        }
         guard let selectedBookID else {
             return
         }
@@ -352,6 +553,9 @@ final class LibraryStore: ObservableObject {
         fill(\.edition, with: scanned.edition)
         fill(\.sourceName, with: scanned.sourceName)
         fill(\.sourceURL, with: scanned.sourceURL)
+        fill(\.publisherText, with: scanned.publisherText)
+        fill(\.seriesText, with: scanned.seriesText)
+        fill(\.volumeText, with: scanned.volumeText)
 
         if scanned.fileType == .imageSequence {
             changed = PageRecordMerger.merge(scanned.pageRecords, into: &current) || changed

@@ -45,6 +45,40 @@ struct Book: Identifiable, Codable, Hashable, Sendable {
     var pageRecords: [PageRecord]
     // Keep annotations for removed/replaced pages available for later recovery.
     var archivedPageRecords: [PageRecord]? = nil
+    // Added after v1.0: optional so older library.json files still decode.
+    var publisher: String? = nil
+    var seriesName: String? = nil
+    var volume: String? = nil
+
+    /// 出版社 / 出版者
+    var publisherText: String {
+        get { publisher ?? "" }
+        set { publisher = newValue.nilIfEmpty }
+    }
+
+    /// 所属丛书
+    var seriesText: String {
+        get { seriesName ?? "" }
+        set { seriesName = newValue.nilIfEmpty }
+    }
+
+    /// 卷册，如“第3册”“卷一至卷七”
+    var volumeText: String {
+        get { volume ?? "" }
+        set { volume = newValue.nilIfEmpty }
+    }
+
+    /// 书名加卷册，用于书单和标题栏。
+    var displayTitle: String {
+        guard let volume = volume?.nilIfEmpty else { return title }
+        return "\(title) · \(volume)"
+    }
+
+    /// 原文件或文件夹名，书名改过后仍可对照。
+    var fileName: String {
+        let url = URL(fileURLWithPath: localPath)
+        return fileType == .imageSequence ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
+    }
 
     static func new(
         title: String,
@@ -88,4 +122,11 @@ struct PageRecord: Identifiable, Codable, Hashable, Sendable {
     var notes: String
     var status: String
     var fileIdentity: String? = nil
+}
+
+extension String {
+    var nilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

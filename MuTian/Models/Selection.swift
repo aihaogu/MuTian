@@ -8,6 +8,7 @@ enum SidebarSelection: Hashable, Codable {
     case status(BookStatus)
     case classification(String)
     case source(String)
+    case series(String)
 }
 
 extension SidebarSelection {
@@ -15,7 +16,7 @@ extension SidebarSelection {
         switch self {
         case .downloads, .statistics:
             return false
-        case .all, .favorites, .status, .classification, .source:
+        case .all, .favorites, .status, .classification, .source, .series:
             return true
         }
     }

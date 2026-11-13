@@ -4,6 +4,8 @@ struct SidebarView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadStore: DownloadTaskStore
     @State private var expandedClassificationIDs: Set<String> = []
+    @State private var renamingSeries: String?
+    @State private var newSeriesName = ""
 
     var body: some View {
         let counts = ClassificationCounts(books: libraryStore.books, store: libraryStore)
@@ -44,6 +46,47 @@ struct SidebarView: View {
                     .tracking(4)
                     .foregroundStyle(.secondary)
             }
+
+            let series = libraryStore.seriesCounts
+            if !series.isEmpty {
+                Section {
+                    ForEach(series, id: \.name) { item in
+                        SidebarNavRow(title: item.name, systemImage: "square.stack", count: item.count)
+                            .lineLimit(1)
+                            .help(item.name)
+                            .sidebarDestination(.series(item.name), in: libraryStore)
+                            .contextMenu {
+                                Button("重命名丛书…") {
+                                    newSeriesName = item.name
+                                    renamingSeries = item.name
+                                }
+                                Button("移出丛书（\(item.count) 部）") {
+                                    libraryStore.renameSeries(item.name, to: "")
+                                }
+                            }
+                    }
+                } header: {
+                    Text("丛书")
+                        .font(.song(11, weight: .semibold))
+                        .tracking(4)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .alert("重命名丛书", isPresented: Binding(
+            get: { renamingSeries != nil },
+            set: { if !$0 { renamingSeries = nil } }
+        )) {
+            TextField("丛书名", text: $newSeriesName)
+            Button("取消", role: .cancel) { renamingSeries = nil }
+            Button("重命名") {
+                if let old = renamingSeries {
+                    libraryStore.renameSeries(old, to: newSeriesName.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                renamingSeries = nil
+            }
+        } message: {
+            Text("该丛书下的所有书目会一起改名；两部丛书改成同名即合并。")
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)

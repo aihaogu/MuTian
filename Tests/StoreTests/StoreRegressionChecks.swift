@@ -30,7 +30,8 @@ struct StoreRegressionChecks {
         try await testQueueAndDownloads(base)
         try await testRootRemoval(base)
         try testWriter(base)
-        print("PASS: library protection/recovery, page identity/archive, queued imports, download states/defaults/logs, folder removal, persistence flush")
+        try await testBibliography(base)
+        print("PASS: library protection/recovery, page identity/archive, queued imports, download states/defaults/logs, folder removal, persistence flush, bibliographic batch edits")
     }
 
     @MainActor
@@ -237,6 +238,71 @@ struct StoreRegressionChecks {
         let logFile = logDirectory.appendingPathComponent("\(id)-stdout.log")
         try require(try Data(contentsOf: logFile).count <= 2 * 1024 * 1024 && logs.tail(id: id, stderr: false).hasSuffix("END"), "Log rotation exceeded cap or lost tail")
     }
+    @MainActor
+    static func testBibliography(_ base: URL) async throws {
+        let fm = FileManager.default
+        let work = base.appendingPathComponent("biblio/全元文（60册）-凤凰出版社")
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        for name in ["1.txt", "2.txt"] { try Data("x".utf8).write(to: work.appendingPathComponent(name)) }
+        let named = base.appendingPathComponent("biblio/尔雅今注-徐朝华注-南开大学出版社1987.txt")
+        try Data("x".utf8).write(to: named)
+
+        let file = base.appendingPathComponent("biblio-library.json")
+        let store = LibraryStore(libraryFile: file)
+        await store.importURLs([base.appendingPathComponent("biblio")])
+        try require(store.books.count == 3, "Bibliography fixture import failed")
+        let erya = store.books.first { $0.localPath == named.path }!
+        try require(erya.title == "尔雅今注" && erya.author == "徐朝华注" && erya.publisherText == "南开大学出版社" && erya.edition == "1987",
+            "Import splits 书名-作者-出版社 names: \(erya)")
+        let volumes = store.books.filter { $0.localPath.hasPrefix(work.path) }
+        try require(volumes.allSatisfy { $0.title == "全元文" && $0.publisherText == "凤凰出版社" }
+            && Set(volumes.map(\.volumeText)) == ["第1册", "第2册"], "Numbered files inherit the work folder")
+        try require(store.recognitionProposals(for: store.books).isEmpty, "Fresh imports need no re-recognition")
+
+        let ids = Set(volumes.map(\.id))
+        try require(store.batchUpdate(ids, values: [.series: "元代文献", .edition: "2004"]) == 2, "Batch edit updates both volumes")
+        try require(store.seriesCounts.map(\.name) == ["元代文献"], "Series list follows the batch edit")
+        store.sidebarSelection = .series("元代文献")
+        try require(store.filteredBooks.count == 2, "Series filter")
+        try require(store.renameSeries("元代文献", to: "全元文系列") == 2 && store.sidebarSelection == .series("全元文系列"),
+            "Renaming a series keeps the sidebar on it")
+        let backups = try fmContents(base).filter { $0.lastPathComponent.hasPrefix("library-before-batch-edit-") }
+        try require(backups.count == 2, "Each batch edit backs up library.json first")
+        store.sidebarSelection = .all
+        store.searchText = "凤凰"
+        try require(store.filteredBooks.count == 2, "Search covers the publisher")
+        store.searchText = ""
+
+        // Cached filtering must follow edits: a renamed book moves in the sorted list.
+        func expectedOrder() -> [UUID] {
+            store.books.sorted {
+                let order = $0.title.localizedStandardCompare($1.title)
+                if order != .orderedSame { return order == .orderedAscending }
+                return $0.volumeText.localizedStandardCompare($1.volumeText) == .orderedAscending
+            }.map(\.id)
+        }
+        try require(store.filteredBooks.map(\.id) == expectedOrder(), "Initial order")
+        var renamed = store.books.first { $0.localPath == named.path }!
+        let before = store.filteredBooks.map(\.id)
+        for title in ["龢", "一切经音义", "Zhou"] {
+            renamed.title = title
+            store.update(renamed)
+            try require(store.filteredBooks.map(\.id) == expectedOrder(), "Sort order refreshes after renaming to \(title)")
+        }
+        try require(Set(before) == Set(store.filteredBooks.map(\.id)), "Same books after renames")
+        var noted = renamed
+        noted.notes = "缓存"
+        store.update(noted)
+        store.searchText = "缓存"
+        try require(store.filteredBooks.map(\.id) == [renamed.id], "Search sees the latest notes")
+        store.searchText = ""
+        store.checkedBookIDs = [renamed.id]
+        store.books.removeAll { $0.id == renamed.id }
+        try require(store.batchTargetBooks.isEmpty, "Removing the selected book must not expand batch actions to every book")
+        store.checkedBookIDs = []
+        try require(store.batchTargetBooks.count == 2, "Explicitly clearing selection restores current-list scope")
+    }
+
     static func fmContents(_ url: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
     }

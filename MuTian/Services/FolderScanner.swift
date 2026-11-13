@@ -127,6 +127,9 @@ enum FolderScanner {
         if let sourceURL = metadata.sourceURL {
             book.sourceURL = sourceURL
         }
+        book.publisher = metadata.publisher
+        book.seriesName = metadata.seriesName
+        book.volume = metadata.volume
     }
 
     private static func pdfPageCount(for url: URL) -> Int {
